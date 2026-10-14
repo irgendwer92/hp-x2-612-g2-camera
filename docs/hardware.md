@@ -98,3 +98,13 @@ Consumer device: `i2c-INT3477:00`
    registers 0x0000–0x0010 to see whether it is MIPI CCS/SMIA++ compliant (→ generic `ccs` driver)
    or needs a new driver. Watch for the shared TPS68470 clock (ov8858 runs at 24 MHz).
 3. Publishing: real Signed-off-by, git remote, upstream submissions.
+
+### 2026-10-14, flat-field calibration (tools/lsc)
+- Black level measured from covered-lens frames: 14.75–16 DN at 10 bit (b 14.75, gb/gr 16, r 15),
+  matching the 0x10 BLC target the driver programs. libcamera's IPU3 BlackLevelCorrection
+  hard-codes 64, which over-subtracts on this sensor (crushed shadows) — to fix alongside Lsc.
+- Flat field (paper against the lens, bright sky; direct sun clipped): corner/centre response
+  r 0.14–0.16, gr/gb 0.19–0.21, b 0.21–0.22; corner R/G ≈ 0.75, B/G ≈ 1.09 (the cyan cast).
+  Unclamped red corner gain ≈ 7×; with the default 4× cap 129/825 red points are clamped.
+- libcamera 0.7.2 IPU3 raw stream reports sequence 0 for every buffer (cam's file sink overwrites
+  raw frames); capture.sh works around it with one cam run per frame.
