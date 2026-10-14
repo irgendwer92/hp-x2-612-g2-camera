@@ -1,0 +1,103 @@
+From: TODO <TODO>
+Subject: [PATCH] platform/x86: int3472: tps68470: Add HP Pro x2 612 G2 front camera supplies
+
+Not for upstream yet: unverified on hardware.
+
+The front IMX241 camera (ACPI INT347F, module FN50FF-562H, I2C3 0x37,
+CSI-2 port 1, 2 lanes) shares the TPS68470 with the rear OV8858. From the
+Windows control-logic and imx241 drivers: VAUX1 is its core supply (1.2 V
+for this module), VAUX2 its I/O supply (1.8 V), PMIC GPIO4 enables an
+external 2.8 V analog regulator, GPIO3 a VCM supply, and GPIO5/GPIO6 are
+driven high to take the sensor out of reset/powerdown.
+
+Add the regulator consumers (named after the ccs driver's supplies) and
+a GPIO lookup table for i2c-INT347F:00. Nothing is powered unless a
+driver binds to the sensor.
+
+Signed-off-by: TODO <TODO>
+---
+--- a/drivers/platform/x86/intel/int3472/tps68470_board_data.c
++++ b/drivers/platform/x86/intel/int3472/tps68470_board_data.c
+@@ -464,6 +464,42 @@
+ 	.consumer_supplies = int3477_vsio_consumer_supplies,
+ };
+ 
++/*
++ * Front IMX241 camera (INT347F, module FN50FF-562H) on the same PMIC. The
++ * Windows driver powers it from VAUX1 (core, 1.2 V for this module) and
++ * VAUX2 (I/O, 1.8 V); its 2.8 V analog supply is an external regulator
++ * enabled by PMIC GPIO4. Supply names follow the ccs driver.
++ */
++static struct regulator_consumer_supply int347f_aux1_consumer_supplies[] = {
++	REGULATOR_SUPPLY("vcore", "i2c-INT347F:00"),
++};
++
++static struct regulator_consumer_supply int347f_aux2_consumer_supplies[] = {
++	REGULATOR_SUPPLY("vio", "i2c-INT347F:00"),
++};
++
++static const struct regulator_init_data hp_x2_612_g2_tps68470_aux1_reg_init_data = {
++	.constraints = {
++		.min_uV = 1200000,
++		.max_uV = 1200000,
++		.apply_uV = true,
++		.valid_ops_mask = REGULATOR_CHANGE_STATUS,
++	},
++	.num_consumer_supplies = ARRAY_SIZE(int347f_aux1_consumer_supplies),
++	.consumer_supplies = int347f_aux1_consumer_supplies,
++};
++
++static const struct regulator_init_data hp_x2_612_g2_tps68470_aux2_reg_init_data = {
++	.constraints = {
++		.min_uV = 1800600,
++		.max_uV = 1800600,
++		.apply_uV = true,
++		.valid_ops_mask = REGULATOR_CHANGE_STATUS,
++	},
++	.num_consumer_supplies = ARRAY_SIZE(int347f_aux2_consumer_supplies),
++	.consumer_supplies = int347f_aux2_consumer_supplies,
++};
++
+ static const struct tps68470_regulator_platform_data hp_x2_612_g2_tps68470_pdata = {
+ 	.reg_init_data = {
+ 		[TPS68470_CORE] = &hp_x2_612_g2_tps68470_core_reg_init_data,
+@@ -471,6 +507,8 @@
+ 		[TPS68470_VCM]  = &hp_x2_612_g2_tps68470_vcm_reg_init_data,
+ 		[TPS68470_VIO]  = &hp_x2_612_g2_tps68470_vio_reg_init_data,
+ 		[TPS68470_VSIO] = &hp_x2_612_g2_tps68470_vsio_reg_init_data,
++		[TPS68470_AUX1] = &hp_x2_612_g2_tps68470_aux1_reg_init_data,
++		[TPS68470_AUX2] = &hp_x2_612_g2_tps68470_aux2_reg_init_data,
+ 	},
+ };
+ 
+@@ -525,6 +563,18 @@
+ 	}
+ };
+ 
++/* Windows drives GPIO5 and GPIO6 high to power the front sensor up */
++static struct gpiod_lookup_table hp_x2_612_g2_int347f_gpios = {
++	.dev_id = "i2c-INT347F:00",
++	.table = {
++		GPIO_LOOKUP("tps68470-gpio", 4, "avdd-enable", GPIO_ACTIVE_HIGH),
++		GPIO_LOOKUP("tps68470-gpio", 3, "vcm-enable", GPIO_ACTIVE_HIGH),
++		GPIO_LOOKUP("tps68470-gpio", 5, "reset", GPIO_ACTIVE_LOW),
++		GPIO_LOOKUP("tps68470-gpio", 6, "powerdown", GPIO_ACTIVE_LOW),
++		{ }
++	}
++};
++
+ static const struct property_entry int3472_tps68470_daisy_chain_gpio_props[] = {
+ 	PROPERTY_ENTRY_BOOL("daisy-chain-enable"),
+ 	{ }
+@@ -587,9 +637,10 @@
+ 	.dev_name = "i2c-INT3472:05",
+ 	.tps68470_regulator_pdata = &hp_x2_612_g2_tps68470_pdata,
+ 	.tps68470_gpio_swnode = &int3472_tps68470_daisy_chain_gpio_swnode,
+-	.n_gpiod_lookups = 1,
++	.n_gpiod_lookups = 2,
+ 	.tps68470_gpio_lookup_tables = {
+ 		&hp_x2_612_g2_int3477_gpios,
++		&hp_x2_612_g2_int347f_gpios,
+ 	},
+ };
+ 
