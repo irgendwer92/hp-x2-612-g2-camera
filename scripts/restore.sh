@@ -32,7 +32,7 @@ intree() {
 	exit 1
 }
 
-unload ov8858 ipu3_cio2 ipu_bridge intel_skl_int3472_tps68470
+unload ipu3_cio2 ov8858 dw9714 ipu_bridge intel_skl_int3472_tps68470
 rm -f "$blacklist"
 
 modprobe -a intel_skl_int3472_common mc videodev v4l2_async v4l2_fwnode
@@ -42,6 +42,7 @@ echo "insmod in-tree ipu-bridge"
 insmod "$(intree drivers/media/pci/intel/ipu-bridge)"
 echo "modprobe ipu3_cio2"
 modprobe ipu3_cio2
+modprobe dw9714 2>/dev/null || true
 # ov8858 is left unloaded: with stock board data the PMIC does not probe, so
 # the sensor device never appears and udev would not load it anyway.
 

@@ -55,8 +55,10 @@ unload() {
 dmesg_mark=$(dmesg | wc -l)
 
 say "unloading in-tree modules"
-# Users before providers: sensor, then cio2 (uses ipu_bridge), then bridge, then PMIC.
-unload ov8858 ipu3_cio2 ipu_bridge intel_skl_int3472_tps68470
+# cio2 first: once the sensor is bound, v4l2 holds a reference on the ov8858
+# (and dw9714 lens) modules through cio2. dw9714 holds the VCM regulator, so it
+# must go before the PMIC driver. Then the bridge, then the PMIC.
+unload ipu3_cio2 ov8858 dw9714 ipu_bridge intel_skl_int3472_tps68470
 
 mkdir -p /run/modprobe.d
 echo "blacklist ov8858   # temporary, from hp-x2-612-g2-camera scripts/test-load.sh" > "$blacklist"
@@ -84,6 +86,8 @@ if is_loaded ov8858; then
 fi
 insmod "$kodir/ov8858.ko"
 udevadm settle -t 10 || true
+# The VCM i2c client survives module reloads; rebind its lens driver.
+modprobe dw9714 2>/dev/null || true
 sleep 1
 
 say "loaded modules"
