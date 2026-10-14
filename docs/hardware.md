@@ -43,3 +43,12 @@ Consumer device: `i2c-INT3477:00`
   Do not scan this bus; use targeted reads only.
 - Open questions: reset/powerdown on PMIC GPIOs other than 7/9 (Dell 7212 uses 3/4)?
   Sensor at another address (0x36)? Does the module EEPROM (0x50) answer when powered?
+
+### 2026-10-14, second run (after full power-off)
+- Module EEPROM at 0x50 answers (`01 03 01 00`) while the sensor NACKs at 0x10 and 0x36:
+  the module is powered and on i2c-2.
+- Requesting PMIC GPIOs 0–6 as outputs caused `i2c_dw_handle_tx_abort: lost arbitration`
+  on i2c-2 right after GPIO1 was driven → GPIO1/GPIO2 are wired to the I2C lines
+  (TPS68470 I2C daisy chain). Board data now sets `daisy-chain-enable` (GPIO1/2 inputs).
+- Rail switch-off failed again afterwards (`CORE: failed to disable: -EAGAIN`); full power-off
+  needed after each failed experiment.

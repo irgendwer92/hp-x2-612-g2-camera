@@ -379,6 +379,9 @@ static const struct tps68470_regulator_platform_data intel_nvl_tps68470_pdata = 
  *   VCM 2.8 V -> VCM supply.
  * VIO is kept always-on at the same voltage as VSIO; AUX1/AUX2 are left
  * untouched as no second sensor hangs off this PMIC.
+ * The sensor is reached through the PMIC's I2C daisy chain: driving GPIO1
+ * as an output causes arbitration loss on the host I2C bus, and the sensor
+ * NACKs while the module EEPROM answers, so GPIO1/GPIO2 must stay inputs.
  * The SSDB VCM type 2 is a dw9714, which requests its supply as "vcc"; "vdd"
  * is provided as well for other VCM drivers.
  */
@@ -576,6 +579,7 @@ static const struct int3472_tps68470_board_data intel_nvl_tps68470_board_data = 
 static const struct int3472_tps68470_board_data hp_x2_612_g2_tps68470_board_data = {
 	.dev_name = "i2c-INT3472:05",
 	.tps68470_regulator_pdata = &hp_x2_612_g2_tps68470_pdata,
+	.tps68470_gpio_swnode = &int3472_tps68470_daisy_chain_gpio_swnode,
 	.n_gpiod_lookups = 1,
 	.tps68470_gpio_lookup_tables = {
 		&hp_x2_612_g2_int3477_gpios,

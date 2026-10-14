@@ -1,6 +1,6 @@
 #!/bin/sh
 # Bring-up experiment: with the sensor held powered by the diagnostic ov8858
-# build, drive the unused TPS68470 GPIOs (0-6) high, all at once and then one
+# build, drive the unused TPS68470 GPIOs (0, 3-6) high, all at once and then one
 # by one, and after each step read the OV8858 chip-ID register (0x300a, expect
 # 00 88 58) at 0x10 and 0x36. Also probes the module EEPROM at 0x50 to tell
 # "module unpowered" apart from "sensor held in reset/powerdown".
@@ -59,8 +59,8 @@ done
 
 say "chip-ID reads (expect '0x00 0x88 0x58')"
 probe "baseline"
-hi 0=1 1=1 2=1 3=1 4=1 5=1 6=1; probe "0-6 all high"; release
-for n in 0 1 2 3 4 5 6; do
+hi 0=1 3=1 4=1 5=1 6=1; probe "0,3-6 high"; release
+for n in 0 3 4 5 6; do  # never GPIO1/2: daisy-chained to the I2C bus
 	hi $n=1; probe "gpio $n high"; release
 done
 say "gpio line states now"
