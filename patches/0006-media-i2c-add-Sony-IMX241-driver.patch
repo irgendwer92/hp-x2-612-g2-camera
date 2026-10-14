@@ -1,0 +1,1254 @@
+From: TODO <TODO>
+Subject: [PATCH] media: i2c: Add Sony IMX241 driver
+
+Not for upstream yet: unverified on hardware.
+
+The Sony IMX241 is a 5 MP (2592x1944) raw Bayer sensor with a SMIA 1.0
+register interface. It is the front camera of the HP Pro x2 612 G2
+(ACPI HID INT347F, module FN50FF-562H, IPU3, CSI-2 port 1, 2 lanes,
+TPS68470 PMIC). The generic ccs driver cannot drive it: the sensor
+leaves its clock frequency limit registers empty, reports a wrong pixel
+array size, takes its VT clock dividers in manufacturer registers
+(0x3037/0x3038) and clocks two pixels per VT clock, and it needs a set
+of manufacturer register writes in every mode.
+
+Add a driver with the register settings of the Windows driver for this
+module:
+
+- 2592x1944 RAW10 (Windows table A) and 1296x972 2x2 binned (readout
+  registers of Windows tables C/D, timing of table F), both at about
+  30 fps.
+
+- PLL settings selected from the external clock rate, which may be
+  shared with another sensor and is therefore not changed if it is
+  usable: 24 MHz (pre-PLL divider 2, multiplier 83, PLL 996 MHz, link
+  frequency 498 MHz) or 19.2 MHz (as on Windows: divider 2, multiplier
+  104, PLL 998.4 MHz, link frequency 499.2 MHz). Only if the clock runs
+  at neither rate, 24 MHz is requested. The rate is checked again
+  before streaming starts.
+
+- Exposure, analogue gain (256 / (256 - code), code 0..224) and digital
+  gain, written under a group hold; vertical blanking; horizontal
+  blanking, pixel rate and link frequency (read-only); horizontal and
+  vertical flip with the matching Bayer order; the SMIA test patterns;
+  orientation and rotation from firmware; crop selection targets.
+
+- Power sequencing as on Windows: analogue supply (an optional "avdd"
+  regulator and/or "avdd-enable" GPIO), "vio", "vcore", clock, release
+  of the "reset" and "powerdown" GPIOs, 20 ms delay. The TPS68470 GPIOs
+  are I2C based, so the _cansleep accessors are used.
+
+- On ACPI systems the fwnode graph is created by ipu-bridge; probing is
+  deferred until the endpoint exists, before any resource is claimed.
+
+The Kconfig and Makefile entries are not part of this patch: this tree
+builds the driver out of tree.
+
+Signed-off-by: TODO <TODO>
+---
+--- /dev/null
++++ b/drivers/media/i2c/imx241.c
+@@ -0,0 +1,1203 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * V4L2 driver for the Sony IMX241 5 MP raw Bayer sensor (SMIA 1.0).
++ *
++ * The register settings come from the Windows driver for the front camera
++ * of the HP Pro x2 612 G2 (module FN50FF-562H, ACPI HID INT347F, 2 CSI-2
++ * data lanes). The sensor needs manufacturer specific registers for its
++ * readout and VT clock setup, and its SMIA limit registers are incomplete,
++ * so the generic CCS driver cannot drive it.
++ *
++ * Timing model: the sensor clocks two pixels per VT pixel clock, so the line
++ * length in pixels is twice the line_length_pck register, and the pixel rate
++ * is twice the VT pixel clock. With the VT dividers fixed at 10 (0x3037) and
++ * 1 (0x3038), and the output path at 10 bits per pixel on 2 lanes:
++ *
++ *   pll        = ext_clk / pre_pll_div * pll_mult
++ *   vt_pix_clk = pll / 10
++ *   pixel_rate = 2 * vt_pix_clk = link_freq * 2 (DDR) * 2 (lanes) / 10
++ *   link_freq  = pll / 2
++ */
++
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/i2c.h>
++#include <linux/minmax.h>
++#include <linux/mod_devicetable.h>
++#include <linux/module.h>
++#include <linux/pm_runtime.h>
++#include <linux/regulator/consumer.h>
++
++#include <media/v4l2-cci.h>
++#include <media/v4l2-ctrls.h>
++#include <media/v4l2-device.h>
++#include <media/v4l2-fwnode.h>
++#include <media/v4l2-mediabus.h>
++
++#define IMX241_REG_CHIP_ID		CCI_REG16(0x0000)
++#define IMX241_CHIP_ID			0x0241
++#define IMX241_REG_REVISION		CCI_REG8(0x0002)
++
++#define IMX241_REG_MODE_SELECT		CCI_REG8(0x0100)
++#define IMX241_MODE_STANDBY		0x00
++#define IMX241_MODE_STREAMING		0x01
++
++#define IMX241_REG_ORIENTATION		CCI_REG8(0x0101)
++#define IMX241_ORIENTATION_HFLIP	BIT(0)
++#define IMX241_ORIENTATION_VFLIP	BIT(1)
++
++#define IMX241_REG_SOFTWARE_RESET	CCI_REG8(0x0103)
++#define IMX241_REG_GROUP_HOLD		CCI_REG8(0x0104)
++
++/* Coarse integration time, in lines */
++#define IMX241_REG_EXPOSURE		CCI_REG16(0x0202)
++#define IMX241_EXPOSURE_MIN		1
++#define IMX241_EXPOSURE_MARGIN		5
++
++/* Analogue gain = 256 / (256 - code) */
++#define IMX241_REG_ANALOGUE_GAIN	CCI_REG8(0x0205)
++#define IMX241_ANA_GAIN_MIN		0
++#define IMX241_ANA_GAIN_MAX		224
++#define IMX241_ANA_GAIN_DEFAULT		0
++
++/* Digital gain, 8.8 fixed point, one register per colour channel */
++#define IMX241_REG_DGAIN_GR		CCI_REG16(0x020e)
++#define IMX241_REG_DGAIN_R		CCI_REG16(0x0210)
++#define IMX241_REG_DGAIN_B		CCI_REG16(0x0212)
++#define IMX241_REG_DGAIN_GB		CCI_REG16(0x0214)
++#define IMX241_DGAIN_MIN		0x0100
++#define IMX241_DGAIN_MAX		0x0fff
++#define IMX241_DGAIN_DEFAULT		0x0100
++
++#define IMX241_REG_FRAME_LENGTH		CCI_REG16(0x0340)
++#define IMX241_FLL_MAX			0xffff
++/* min_frame_blanking_lines from the sensor's limit registers */
++#define IMX241_VBLANK_MIN		6
++
++#define IMX241_REG_PRE_PLL_DIV		CCI_REG8(0x0305)
++#define IMX241_REG_PLL_MULT		CCI_REG8(0x0307)
++
++#define IMX241_REG_TEST_PATTERN		CCI_REG16(0x0600)
++
++/*
++ * The readout window programmed by the Windows driver covers 2592x1944
++ * pixels. The pixel array size in the limit registers (1936x1096) is wrong.
++ */
++#define IMX241_NATIVE_WIDTH		2592U
++#define IMX241_NATIVE_HEIGHT		1944U
++
++/* Pixel order without flips, per register 0x0006 */
++#define IMX241_DEFAULT_CODE		MEDIA_BUS_FMT_SRGGB10_1X10
++
++#define IMX241_NUM_DATA_LANES		2U
++
++/* In power-up order. The analogue supply "avdd" is optional, see below. */
++static const char * const imx241_supply_names[] = {
++	"vio",		/* I/O 1.8 V */
++	"vcore",	/* Core 1.05 V */
++};
++
++#define IMX241_NUM_SUPPLIES ARRAY_SIZE(imx241_supply_names)
++
++/*
++ * Supported external clock rates. The link frequencies are listed in the
++ * same order as the configurations that produce them.
++ */
++static const s64 imx241_link_freq_menu[] = {
++	498000000,
++	499200000,
++};
++
++struct imx241_clk_cfg {
++	unsigned long ext_clk;
++	u8 pre_pll_div;
++	u8 pll_mult;
++	unsigned int link_freq_index;
++};
++
++static const struct imx241_clk_cfg imx241_clk_cfgs[] = {
++	{
++		/* 24 MHz / 2 * 83 = 996 MHz */
++		.ext_clk = 24000000,
++		.pre_pll_div = 2,
++		.pll_mult = 83,
++		.link_freq_index = 0,
++	}, {
++		/* 19.2 MHz / 2 * 104 = 998.4 MHz, as programmed by Windows */
++		.ext_clk = 19200000,
++		.pre_pll_div = 2,
++		.pll_mult = 104,
++		.link_freq_index = 1,
++	},
++};
++
++/* The rate to request when the clock runs at none of the above */
++#define IMX241_DEFAULT_EXT_CLK		24000000U
++
++static u64 imx241_pixel_rate(const struct imx241_clk_cfg *cfg)
++{
++	/* link_freq * 2 (DDR) * 2 lanes / 10 bits per pixel */
++	return imx241_link_freq_menu[cfg->link_freq_index] *
++	       2 * IMX241_NUM_DATA_LANES / 10;
++}
++
++/*
++ * Mode registers, in the order the Windows driver writes them, up to the
++ * output size. The PLL registers follow, then imx241_common_regs.
++ */
++static const struct cci_reg_sequence imx241_2592x1944_regs[] = {
++	{ IMX241_REG_ORIENTATION, 0x00 },
++	{ CCI_REG8(0x303c), 0x3b },
++	{ CCI_REG8(0x303d), 0x00 },
++	{ CCI_REG8(0x3041), 0xd7 },
++	{ CCI_REG8(0x30e0), 0x00 },
++	{ CCI_REG8(0x30e1), 0x00 },
++	{ CCI_REG8(0x30f6), 0x20 },
++	{ CCI_REG8(0x34ce), 0xff },
++	{ IMX241_REG_FRAME_LENGTH, 2280 },
++	{ CCI_REG16(0x0342), 1456 },		/* line_length_pck */
++	{ CCI_REG16(0x0344), 0 },		/* x_addr_start */
++	{ CCI_REG16(0x0346), 0 },		/* y_addr_start */
++	{ CCI_REG16(0x0348), 2591 },		/* x_addr_end */
++	{ CCI_REG16(0x034a), 1943 },		/* y_addr_end */
++	{ CCI_REG8(0x0381), 0x01 },		/* x_even_inc */
++	{ CCI_REG8(0x0383), 0x01 },		/* x_odd_inc */
++	{ CCI_REG8(0x0385), 0x01 },		/* y_even_inc */
++	{ CCI_REG8(0x0387), 0x01 },		/* y_odd_inc */
++	{ CCI_REG8(0x3048), 0x20 },		/* no binning */
++	{ CCI_REG8(0x30d5), 0x00 },
++	{ CCI_REG8(0x3165), 0x20 },
++	{ CCI_REG8(0x30d1), 0x00 },
++	{ CCI_REG8(0x30d0), 0x2a },
++	{ CCI_REG8(0x3102), 0x13 },
++	{ CCI_REG8(0x3103), 0x47 },
++	{ CCI_REG8(0x3049), 0x01 },
++	{ CCI_REG8(0x304d), 0x02 },
++	{ CCI_REG8(0x304c), 0xd7 },
++	{ CCI_REG16(0x0112), 0x0a0a },		/* RAW10 */
++	{ CCI_REG16(0x034c), 2592 },		/* x_output_size */
++	{ CCI_REG16(0x034e), 1944 },		/* y_output_size */
++};
++
++static const struct cci_reg_sequence imx241_1296x972_regs[] = {
++	{ IMX241_REG_ORIENTATION, 0x00 },
++	{ CCI_REG8(0x303c), 0x3b },
++	{ CCI_REG8(0x303d), 0x00 },
++	{ CCI_REG8(0x3041), 0xd7 },
++	{ CCI_REG8(0x30e0), 0x00 },
++	{ CCI_REG8(0x30e1), 0x00 },
++	{ CCI_REG8(0x30f6), 0x20 },
++	{ CCI_REG8(0x34ce), 0xff },
++	{ IMX241_REG_FRAME_LENGTH, 2076 },
++	{ CCI_REG16(0x0342), 1600 },		/* line_length_pck */
++	{ CCI_REG16(0x0344), 0 },		/* x_addr_start */
++	{ CCI_REG16(0x0346), 0 },		/* y_addr_start */
++	{ CCI_REG16(0x0348), 2591 },		/* x_addr_end */
++	{ CCI_REG16(0x034a), 1943 },		/* y_addr_end */
++	{ CCI_REG8(0x0381), 0x01 },		/* x_even_inc */
++	{ CCI_REG8(0x0383), 0x01 },		/* x_odd_inc */
++	{ CCI_REG8(0x0385), 0x01 },		/* y_even_inc */
++	{ CCI_REG8(0x0387), 0x03 },		/* y_odd_inc */
++	{ CCI_REG8(0x3048), 0x25 },		/* 2x2 binning */
++	{ CCI_REG8(0x30d5), 0x00 },
++	{ CCI_REG8(0x3165), 0x28 },
++	{ CCI_REG8(0x30d1), 0x00 },
++	{ CCI_REG8(0x30d0), 0x2a },
++	{ CCI_REG8(0x3102), 0x13 },
++	{ CCI_REG8(0x3103), 0x47 },
++	{ CCI_REG8(0x3049), 0x01 },
++	{ CCI_REG8(0x304d), 0x02 },
++	{ CCI_REG8(0x304c), 0xd7 },
++	{ CCI_REG16(0x0112), 0x0a0a },		/* RAW10 */
++	{ CCI_REG16(0x034c), 1296 },		/* x_output_size */
++	{ CCI_REG16(0x034e), 972 },		/* y_output_size */
++};
++
++/*
++ * Written after the PLL registers in every mode. 0x3037/0x3038 are the VT
++ * pixel and system clock dividers. 0x30a2, 0x30a5, 0x31aa and 0x3318 depend
++ * on the PLL rate; these are the Windows values for a PLL of about 1 GHz.
++ */
++static const struct cci_reg_sequence imx241_common_regs[] = {
++	{ CCI_REG8(0x3037), 0x0a },
++	{ CCI_REG8(0x3038), 0x01 },
++	{ CCI_REG8(0x303e), 0x01 },
++	{ CCI_REG8(0x30a2), 0x0e },
++	{ CCI_REG8(0x30a5), 0x61 },
++	{ CCI_REG8(0x30a7), 0x40 },
++	{ CCI_REG8(0x31aa), 0x02 },
++	{ CCI_REG8(0x3301), 0x00 },
++	{ CCI_REG8(0x3318), 0x60 },
++	{ CCI_REG8(0x0204), 0x00 },		/* analogue gain, high byte */
++};
++
++struct imx241_mode {
++	u32 width;
++	u32 height;
++	/* line_length_pck in VT clocks; a line is twice as many pixels */
++	u32 llp;
++	/* Default frame length in lines, about 30 fps at both clock rates */
++	u32 fll_def;
++	const struct cci_reg_sequence *regs;
++	unsigned int num_regs;
++};
++
++static const struct imx241_mode imx241_modes[] = {
++	{
++		/* Windows table A */
++		.width = 2592,
++		.height = 1944,
++		.llp = 1456,
++		.fll_def = 2280,
++		.regs = imx241_2592x1944_regs,
++		.num_regs = ARRAY_SIZE(imx241_2592x1944_regs),
++	}, {
++		/*
++		 * 2x2 binned. Windows table F's timing at a PLL of about 1 GHz
++		 * (Windows tables C/D use the same readout registers with a
++		 * slower PLL and a different link frequency).
++		 */
++		.width = 1296,
++		.height = 972,
++		.llp = 1600,
++		.fll_def = 2076,
++		.regs = imx241_1296x972_regs,
++		.num_regs = ARRAY_SIZE(imx241_1296x972_regs),
++	},
++};
++
++/* Indexed by (vflip << 1) | hflip */
++static const u32 imx241_mbus_codes[] = {
++	MEDIA_BUS_FMT_SRGGB10_1X10,
++	MEDIA_BUS_FMT_SGRBG10_1X10,
++	MEDIA_BUS_FMT_SGBRG10_1X10,
++	MEDIA_BUS_FMT_SBGGR10_1X10,
++};
++
++static const char * const imx241_test_pattern_menu[] = {
++	"Disabled",
++	"Solid Colour",
++	"Colour Bars",
++	"Colour Bars With Fade to Grey",
++	"PN9",
++};
++
++struct imx241 {
++	struct v4l2_subdev sd;
++	struct media_pad pad;
++
++	struct regmap *regmap;
++	struct clk *xclk;
++	const struct imx241_clk_cfg *clk_cfg;
++	struct regulator_bulk_data supplies[IMX241_NUM_SUPPLIES];
++	struct regulator *avdd;
++	struct gpio_desc *avdd_gpio;
++	struct gpio_desc *reset_gpio;
++	struct gpio_desc *powerdown_gpio;
++
++	struct v4l2_ctrl_handler ctrl_handler;
++	struct v4l2_ctrl *pixel_rate;
++	struct v4l2_ctrl *link_freq;
++	struct v4l2_ctrl *vblank;
++	struct v4l2_ctrl *hblank;
++	struct v4l2_ctrl *hflip;
++	struct v4l2_ctrl *vflip;
++	/* Exposure and gains are applied together under a group hold */
++	struct {
++		struct v4l2_ctrl *exposure;
++		struct v4l2_ctrl *again;
++		struct v4l2_ctrl *dgain;
++	};
++};
++
++static inline struct imx241 *to_imx241(struct v4l2_subdev *sd)
++{
++	return container_of(sd, struct imx241, sd);
++}
++
++static u32 imx241_get_format_code(struct imx241 *imx241)
++{
++	return imx241_mbus_codes[(imx241->vflip->val ? 2 : 0) |
++				 (imx241->hflip->val ? 1 : 0)];
++}
++
++static const struct imx241_mode *imx241_find_mode(u32 width, u32 height)
++{
++	return v4l2_find_nearest_size(imx241_modes, ARRAY_SIZE(imx241_modes),
++				      width, height, width, height);
++}
++
++static const struct imx241_clk_cfg *imx241_find_clk_cfg(unsigned long rate)
++{
++	unsigned int i;
++
++	for (i = 0; i < ARRAY_SIZE(imx241_clk_cfgs); i++)
++		if (imx241_clk_cfgs[i].ext_clk == rate)
++			return &imx241_clk_cfgs[i];
++
++	return NULL;
++}
++
++/* -----------------------------------------------------------------------------
++ * Controls
++ */
++
++static int imx241_write_exposure_gain(struct imx241 *imx241)
++{
++	u32 dgain = imx241->dgain->val;
++	int ret = 0;
++
++	cci_write(imx241->regmap, IMX241_REG_GROUP_HOLD, 1, &ret);
++	cci_write(imx241->regmap, IMX241_REG_EXPOSURE, imx241->exposure->val,
++		  &ret);
++	cci_write(imx241->regmap, IMX241_REG_ANALOGUE_GAIN, imx241->again->val,
++		  &ret);
++	cci_write(imx241->regmap, IMX241_REG_DGAIN_GR, dgain, &ret);
++	cci_write(imx241->regmap, IMX241_REG_DGAIN_R, dgain, &ret);
++	cci_write(imx241->regmap, IMX241_REG_DGAIN_B, dgain, &ret);
++	cci_write(imx241->regmap, IMX241_REG_DGAIN_GB, dgain, &ret);
++	cci_write(imx241->regmap, IMX241_REG_GROUP_HOLD, 0, &ret);
++
++	return ret;
++}
++
++static int imx241_set_ctrl(struct v4l2_ctrl *ctrl)
++{
++	struct imx241 *imx241 = container_of(ctrl->handler, struct imx241,
++					     ctrl_handler);
++	struct i2c_client *client = v4l2_get_subdevdata(&imx241->sd);
++	const struct v4l2_mbus_framefmt *format;
++	struct v4l2_subdev_state *state;
++	int ret = 0;
++
++	state = v4l2_subdev_get_locked_active_state(&imx241->sd);
++	format = v4l2_subdev_state_get_format(state, 0);
++
++	if (ctrl->id == V4L2_CID_VBLANK) {
++		int exposure_max = format->height + ctrl->val -
++				   IMX241_EXPOSURE_MARGIN;
++
++		ret = __v4l2_ctrl_modify_range(imx241->exposure,
++					       imx241->exposure->minimum,
++					       exposure_max,
++					       imx241->exposure->step,
++					       exposure_max);
++		if (ret)
++			return ret;
++	}
++
++	/* Registers are only written while the sensor is powered up. */
++	if (pm_runtime_get_if_in_use(&client->dev) == 0)
++		return 0;
++
++	switch (ctrl->id) {
++	case V4L2_CID_EXPOSURE:
++		/* Cluster master for exposure, analogue and digital gain */
++		ret = imx241_write_exposure_gain(imx241);
++		break;
++	case V4L2_CID_VBLANK:
++		cci_write(imx241->regmap, IMX241_REG_GROUP_HOLD, 1, &ret);
++		cci_write(imx241->regmap, IMX241_REG_FRAME_LENGTH,
++			  format->height + ctrl->val, &ret);
++		cci_write(imx241->regmap, IMX241_REG_GROUP_HOLD, 0, &ret);
++		break;
++	case V4L2_CID_HFLIP:
++	case V4L2_CID_VFLIP:
++		cci_update_bits(imx241->regmap, IMX241_REG_ORIENTATION,
++				IMX241_ORIENTATION_HFLIP |
++				IMX241_ORIENTATION_VFLIP,
++				(imx241->hflip->val ? IMX241_ORIENTATION_HFLIP : 0) |
++				(imx241->vflip->val ? IMX241_ORIENTATION_VFLIP : 0),
++				&ret);
++		break;
++	case V4L2_CID_TEST_PATTERN:
++		cci_write(imx241->regmap, IMX241_REG_TEST_PATTERN, ctrl->val,
++			  &ret);
++		break;
++	default:
++		dev_dbg(&client->dev, "control 0x%x not handled\n", ctrl->id);
++		ret = -EINVAL;
++		break;
++	}
++
++	pm_runtime_put_autosuspend(&client->dev);
++
++	return ret;
++}
++
++static const struct v4l2_ctrl_ops imx241_ctrl_ops = {
++	.s_ctrl = imx241_set_ctrl,
++};
++
++static int imx241_init_controls(struct imx241 *imx241)
++{
++	struct i2c_client *client = v4l2_get_subdevdata(&imx241->sd);
++	const struct imx241_mode *mode = &imx241_modes[0];
++	struct v4l2_ctrl_handler *hdl = &imx241->ctrl_handler;
++	struct v4l2_fwnode_device_properties props;
++	u64 pixel_rate = imx241_pixel_rate(imx241->clk_cfg);
++	u32 hblank = 2 * mode->llp - mode->width;
++	int exposure_max;
++	int ret;
++
++	ret = v4l2_ctrl_handler_init(hdl, 13);
++	if (ret)
++		return ret;
++
++	imx241->pixel_rate = v4l2_ctrl_new_std(hdl, NULL, V4L2_CID_PIXEL_RATE,
++					       pixel_rate, pixel_rate, 1,
++					       pixel_rate);
++
++	imx241->link_freq =
++		v4l2_ctrl_new_int_menu(hdl, NULL, V4L2_CID_LINK_FREQ,
++				       ARRAY_SIZE(imx241_link_freq_menu) - 1,
++				       imx241->clk_cfg->link_freq_index,
++				       imx241_link_freq_menu);
++	if (imx241->link_freq)
++		imx241->link_freq->flags |= V4L2_CTRL_FLAG_READ_ONLY;
++
++	imx241->hblank = v4l2_ctrl_new_std(hdl, NULL, V4L2_CID_HBLANK,
++					   hblank, hblank, 1, hblank);
++	if (imx241->hblank)
++		imx241->hblank->flags |= V4L2_CTRL_FLAG_READ_ONLY;
++
++	imx241->vblank = v4l2_ctrl_new_std(hdl, &imx241_ctrl_ops,
++					   V4L2_CID_VBLANK, IMX241_VBLANK_MIN,
++					   IMX241_FLL_MAX - mode->height, 1,
++					   mode->fll_def - mode->height);
++
++	exposure_max = mode->fll_def - IMX241_EXPOSURE_MARGIN;
++	imx241->exposure = v4l2_ctrl_new_std(hdl, &imx241_ctrl_ops,
++					     V4L2_CID_EXPOSURE,
++					     IMX241_EXPOSURE_MIN, exposure_max,
++					     1, exposure_max);
++	imx241->again = v4l2_ctrl_new_std(hdl, &imx241_ctrl_ops,
++					  V4L2_CID_ANALOGUE_GAIN,
++					  IMX241_ANA_GAIN_MIN,
++					  IMX241_ANA_GAIN_MAX, 1,
++					  IMX241_ANA_GAIN_DEFAULT);
++	imx241->dgain = v4l2_ctrl_new_std(hdl, &imx241_ctrl_ops,
++					  V4L2_CID_DIGITAL_GAIN,
++					  IMX241_DGAIN_MIN, IMX241_DGAIN_MAX,
++					  1, IMX241_DGAIN_DEFAULT);
++
++	imx241->hflip = v4l2_ctrl_new_std(hdl, &imx241_ctrl_ops,
++					  V4L2_CID_HFLIP, 0, 1, 1, 0);
++	if (imx241->hflip)
++		imx241->hflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
++
++	imx241->vflip = v4l2_ctrl_new_std(hdl, &imx241_ctrl_ops,
++					  V4L2_CID_VFLIP, 0, 1, 1, 0);
++	if (imx241->vflip)
++		imx241->vflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
++
++	v4l2_ctrl_new_std_menu_items(hdl, &imx241_ctrl_ops,
++				     V4L2_CID_TEST_PATTERN,
++				     ARRAY_SIZE(imx241_test_pattern_menu) - 1,
++				     0, 0, imx241_test_pattern_menu);
++
++	if (hdl->error) {
++		ret = hdl->error;
++		dev_err_probe(&client->dev, ret, "control init failed\n");
++		goto error;
++	}
++
++	v4l2_ctrl_cluster(3, &imx241->exposure);
++
++	ret = v4l2_fwnode_device_parse(&client->dev, &props);
++	if (ret)
++		goto error;
++
++	ret = v4l2_ctrl_new_fwnode_properties(hdl, &imx241_ctrl_ops, &props);
++	if (ret)
++		goto error;
++
++	imx241->sd.ctrl_handler = hdl;
++
++	return 0;
++
++error:
++	v4l2_ctrl_handler_free(hdl);
++
++	return ret;
++}
++
++/*
++ * The external clock is shared with other sensors on some platforms (the
++ * TPS68470 on the HP Pro x2 612 G2 also clocks the rear OV8858), and one of
++ * them may have changed its rate while this sensor was powered down. Pick the
++ * PLL configuration matching the current rate. Call with the clock enabled,
++ * so the rate cannot change underneath.
++ */
++static int imx241_update_clk_cfg(struct imx241 *imx241)
++{
++	struct device *dev = imx241->sd.dev;
++	const struct imx241_clk_cfg *cfg;
++	unsigned long rate;
++	u64 pixel_rate;
++	int ret;
++
++	rate = clk_get_rate(imx241->xclk);
++	cfg = imx241_find_clk_cfg(rate);
++	if (!cfg) {
++		dev_err(dev, "external clock changed to unsupported %lu Hz\n",
++			rate);
++		return -EINVAL;
++	}
++
++	if (cfg == imx241->clk_cfg)
++		return 0;
++
++	dev_info(dev, "external clock now %lu Hz, link frequency %lld Hz\n",
++		 rate, imx241_link_freq_menu[cfg->link_freq_index]);
++	imx241->clk_cfg = cfg;
++
++	ret = __v4l2_ctrl_s_ctrl(imx241->link_freq, cfg->link_freq_index);
++	if (ret)
++		return ret;
++
++	pixel_rate = imx241_pixel_rate(cfg);
++	return __v4l2_ctrl_modify_range(imx241->pixel_rate, pixel_rate,
++					pixel_rate, 1, pixel_rate);
++}
++
++/* -----------------------------------------------------------------------------
++ * Subdev operations
++ */
++
++static int imx241_enable_streams(struct v4l2_subdev *sd,
++				 struct v4l2_subdev_state *state, u32 pad,
++				 u64 streams_mask)
++{
++	struct imx241 *imx241 = to_imx241(sd);
++	struct device *dev = sd->dev;
++	const struct v4l2_mbus_framefmt *format;
++	const struct imx241_mode *mode;
++	int ret;
++
++	format = v4l2_subdev_state_get_format(state, 0);
++	mode = imx241_find_mode(format->width, format->height);
++
++	ret = pm_runtime_resume_and_get(dev);
++	if (ret < 0)
++		return ret;
++
++	ret = imx241_update_clk_cfg(imx241);
++	if (ret)
++		goto err_rpm_put;
++
++	ret = cci_write(imx241->regmap, IMX241_REG_SOFTWARE_RESET, 1, NULL);
++	if (ret)
++		goto err_rpm_put;
++	usleep_range(1000, 2000);
++
++	cci_write(imx241->regmap, IMX241_REG_MODE_SELECT, IMX241_MODE_STANDBY,
++		  &ret);
++	cci_multi_reg_write(imx241->regmap, mode->regs, mode->num_regs, &ret);
++	cci_write(imx241->regmap, IMX241_REG_PRE_PLL_DIV,
++		  imx241->clk_cfg->pre_pll_div, &ret);
++	cci_write(imx241->regmap, IMX241_REG_PLL_MULT,
++		  imx241->clk_cfg->pll_mult, &ret);
++	cci_multi_reg_write(imx241->regmap, imx241_common_regs,
++			    ARRAY_SIZE(imx241_common_regs), &ret);
++	if (ret) {
++		dev_err(dev, "failed to write mode registers: %d\n", ret);
++		goto err_rpm_put;
++	}
++
++	/* Exposure, gains, frame length, flips and test pattern */
++	ret = __v4l2_ctrl_handler_setup(imx241->sd.ctrl_handler);
++	if (ret)
++		goto err_rpm_put;
++
++	ret = cci_write(imx241->regmap, IMX241_REG_MODE_SELECT,
++			IMX241_MODE_STREAMING, NULL);
++	if (ret)
++		goto err_rpm_put;
++
++	/* Flips change the Bayer order, so they are locked while streaming */
++	__v4l2_ctrl_grab(imx241->vflip, true);
++	__v4l2_ctrl_grab(imx241->hflip, true);
++
++	return 0;
++
++err_rpm_put:
++	pm_runtime_put_autosuspend(dev);
++	return ret;
++}
++
++static int imx241_disable_streams(struct v4l2_subdev *sd,
++				  struct v4l2_subdev_state *state, u32 pad,
++				  u64 streams_mask)
++{
++	struct imx241 *imx241 = to_imx241(sd);
++	int ret;
++
++	ret = cci_write(imx241->regmap, IMX241_REG_MODE_SELECT,
++			IMX241_MODE_STANDBY, NULL);
++	if (ret)
++		dev_err(sd->dev, "failed to stop streaming: %d\n", ret);
++
++	__v4l2_ctrl_grab(imx241->vflip, false);
++	__v4l2_ctrl_grab(imx241->hflip, false);
++
++	pm_runtime_put_autosuspend(sd->dev);
++
++	return ret;
++}
++
++static int imx241_enum_mbus_code(struct v4l2_subdev *sd,
++				 struct v4l2_subdev_state *state,
++				 struct v4l2_subdev_mbus_code_enum *code)
++{
++	if (code->index > 0)
++		return -EINVAL;
++
++	code->code = imx241_get_format_code(to_imx241(sd));
++
++	return 0;
++}
++
++static int imx241_enum_frame_size(struct v4l2_subdev *sd,
++				  struct v4l2_subdev_state *state,
++				  struct v4l2_subdev_frame_size_enum *fse)
++{
++	if (fse->index >= ARRAY_SIZE(imx241_modes))
++		return -EINVAL;
++
++	if (fse->code != imx241_get_format_code(to_imx241(sd)))
++		return -EINVAL;
++
++	fse->min_width = imx241_modes[fse->index].width;
++	fse->max_width = fse->min_width;
++	fse->min_height = imx241_modes[fse->index].height;
++	fse->max_height = fse->min_height;
++
++	return 0;
++}
++
++static int imx241_set_pad_format(struct v4l2_subdev *sd,
++				 struct v4l2_subdev_state *state,
++				 struct v4l2_subdev_format *fmt)
++{
++	struct imx241 *imx241 = to_imx241(sd);
++	const struct imx241_mode *mode;
++	struct v4l2_mbus_framefmt *format;
++	struct v4l2_rect *crop;
++	int ret;
++
++	mode = imx241_find_mode(fmt->format.width, fmt->format.height);
++
++	fmt->format.code = imx241_get_format_code(imx241);
++	fmt->format.width = mode->width;
++	fmt->format.height = mode->height;
++	fmt->format.field = V4L2_FIELD_NONE;
++	fmt->format.colorspace = V4L2_COLORSPACE_RAW;
++	fmt->format.ycbcr_enc = V4L2_YCBCR_ENC_601;
++	fmt->format.quantization = V4L2_QUANTIZATION_FULL_RANGE;
++	fmt->format.xfer_func = V4L2_XFER_FUNC_NONE;
++
++	format = v4l2_subdev_state_get_format(state, 0);
++	*format = fmt->format;
++
++	/* Both modes read out the whole pixel array. */
++	crop = v4l2_subdev_state_get_crop(state, 0);
++	crop->left = 0;
++	crop->top = 0;
++	crop->width = IMX241_NATIVE_WIDTH;
++	crop->height = IMX241_NATIVE_HEIGHT;
++
++	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE) {
++		u32 hblank = 2 * mode->llp - mode->width;
++		int exposure_max = mode->fll_def - IMX241_EXPOSURE_MARGIN;
++
++		ret = __v4l2_ctrl_modify_range(imx241->vblank,
++					       IMX241_VBLANK_MIN,
++					       IMX241_FLL_MAX - mode->height,
++					       1, mode->fll_def - mode->height);
++		if (ret)
++			return ret;
++
++		ret = __v4l2_ctrl_s_ctrl(imx241->vblank,
++					 mode->fll_def - mode->height);
++		if (ret)
++			return ret;
++
++		ret = __v4l2_ctrl_modify_range(imx241->exposure,
++					       imx241->exposure->minimum,
++					       exposure_max,
++					       imx241->exposure->step,
++					       exposure_max);
++		if (ret)
++			return ret;
++
++		ret = __v4l2_ctrl_modify_range(imx241->hblank, hblank, hblank,
++					       1, hblank);
++		if (ret)
++			return ret;
++	}
++
++	return 0;
++}
++
++static int imx241_get_selection(struct v4l2_subdev *sd,
++				struct v4l2_subdev_state *state,
++				struct v4l2_subdev_selection *sel)
++{
++	switch (sel->target) {
++	case V4L2_SEL_TGT_CROP:
++		sel->r = *v4l2_subdev_state_get_crop(state, 0);
++		return 0;
++
++	case V4L2_SEL_TGT_NATIVE_SIZE:
++	case V4L2_SEL_TGT_CROP_DEFAULT:
++	case V4L2_SEL_TGT_CROP_BOUNDS:
++		sel->r.top = 0;
++		sel->r.left = 0;
++		sel->r.width = IMX241_NATIVE_WIDTH;
++		sel->r.height = IMX241_NATIVE_HEIGHT;
++		return 0;
++	}
++
++	return -EINVAL;
++}
++
++static int imx241_init_state(struct v4l2_subdev *sd,
++			     struct v4l2_subdev_state *state)
++{
++	struct v4l2_subdev_format fmt = {
++		.which = V4L2_SUBDEV_FORMAT_TRY,
++		.pad = 0,
++		.format = {
++			.code = IMX241_DEFAULT_CODE,
++			.width = imx241_modes[0].width,
++			.height = imx241_modes[0].height,
++		},
++	};
++
++	return imx241_set_pad_format(sd, state, &fmt);
++}
++
++static const struct v4l2_subdev_video_ops imx241_video_ops = {
++	.s_stream = v4l2_subdev_s_stream_helper,
++};
++
++static const struct v4l2_subdev_pad_ops imx241_pad_ops = {
++	.enum_mbus_code = imx241_enum_mbus_code,
++	.get_fmt = v4l2_subdev_get_fmt,
++	.set_fmt = imx241_set_pad_format,
++	.get_selection = imx241_get_selection,
++	.enum_frame_size = imx241_enum_frame_size,
++	.enable_streams = imx241_enable_streams,
++	.disable_streams = imx241_disable_streams,
++};
++
++static const struct v4l2_subdev_ops imx241_subdev_ops = {
++	.video = &imx241_video_ops,
++	.pad = &imx241_pad_ops,
++};
++
++static const struct v4l2_subdev_internal_ops imx241_internal_ops = {
++	.init_state = imx241_init_state,
++};
++
++/* -----------------------------------------------------------------------------
++ * Power management
++ */
++
++/*
++ * Power-up order of the Windows driver: analogue supply, I/O, core, clock,
++ * then release reset and powerdown and wait 20 ms before the first I2C
++ * access.
++ */
++static int imx241_power_on(struct device *dev)
++{
++	struct v4l2_subdev *sd = dev_get_drvdata(dev);
++	struct imx241 *imx241 = to_imx241(sd);
++	unsigned int i;
++	int ret;
++
++	if (imx241->avdd) {
++		ret = regulator_enable(imx241->avdd);
++		if (ret) {
++			dev_err(dev, "failed to enable avdd: %d\n", ret);
++			return ret;
++		}
++	}
++	gpiod_set_value_cansleep(imx241->avdd_gpio, 1);
++	usleep_range(1000, 2000);
++
++	for (i = 0; i < IMX241_NUM_SUPPLIES; i++) {
++		ret = regulator_enable(imx241->supplies[i].consumer);
++		if (ret) {
++			dev_err(dev, "failed to enable %s: %d\n",
++				imx241->supplies[i].supply, ret);
++			goto err_regulators;
++		}
++	}
++
++	ret = clk_prepare_enable(imx241->xclk);
++	if (ret) {
++		dev_err(dev, "failed to enable clock: %d\n", ret);
++		goto err_regulators;
++	}
++
++	usleep_range(1000, 2000);
++	gpiod_set_value_cansleep(imx241->reset_gpio, 0);
++	gpiod_set_value_cansleep(imx241->powerdown_gpio, 0);
++	msleep(20);
++
++	return 0;
++
++err_regulators:
++	while (i--)
++		regulator_disable(imx241->supplies[i].consumer);
++	gpiod_set_value_cansleep(imx241->avdd_gpio, 0);
++	if (imx241->avdd)
++		regulator_disable(imx241->avdd);
++
++	return ret;
++}
++
++static int imx241_power_off(struct device *dev)
++{
++	struct v4l2_subdev *sd = dev_get_drvdata(dev);
++	struct imx241 *imx241 = to_imx241(sd);
++	unsigned int i;
++
++	gpiod_set_value_cansleep(imx241->powerdown_gpio, 1);
++	gpiod_set_value_cansleep(imx241->reset_gpio, 1);
++	clk_disable_unprepare(imx241->xclk);
++
++	for (i = IMX241_NUM_SUPPLIES; i-- > 0; )
++		regulator_disable(imx241->supplies[i].consumer);
++
++	gpiod_set_value_cansleep(imx241->avdd_gpio, 0);
++	if (imx241->avdd)
++		regulator_disable(imx241->avdd);
++
++	return 0;
++}
++
++/* -----------------------------------------------------------------------------
++ * Probe & remove
++ */
++
++static int imx241_parse_endpoint(struct device *dev, struct imx241 *imx241)
++{
++	struct v4l2_fwnode_endpoint ep = { .bus_type = V4L2_MBUS_CSI2_DPHY };
++	struct fwnode_handle *endpoint;
++	unsigned long link_freq_bitmap;
++	int ret;
++
++	/*
++	 * On ACPI platforms the fwnode graph is created by ipu-bridge, which
++	 * may not have run yet.
++	 */
++	endpoint = fwnode_graph_get_next_endpoint(dev_fwnode(dev), NULL);
++	if (!endpoint)
++		return dev_err_probe(dev, -EPROBE_DEFER,
++				     "waiting for fwnode graph endpoint\n");
++
++	ret = v4l2_fwnode_endpoint_alloc_parse(endpoint, &ep);
++	fwnode_handle_put(endpoint);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to parse endpoint\n");
++
++	if (ep.bus.mipi_csi2.num_data_lanes != IMX241_NUM_DATA_LANES) {
++		ret = dev_err_probe(dev, -EINVAL,
++				    "%u data lanes not supported, only %u\n",
++				    ep.bus.mipi_csi2.num_data_lanes,
++				    IMX241_NUM_DATA_LANES);
++		goto out;
++	}
++
++	ret = v4l2_link_freq_to_bitmap(dev, ep.link_frequencies,
++				       ep.nr_of_link_frequencies,
++				       imx241_link_freq_menu,
++				       ARRAY_SIZE(imx241_link_freq_menu),
++				       &link_freq_bitmap);
++	if (ret)
++		goto out;
++
++	/*
++	 * The link frequency follows the external clock rate. Firmware is
++	 * expected to list the one for the clock it provides.
++	 */
++	if (!(link_freq_bitmap & BIT(imx241->clk_cfg->link_freq_index)))
++		dev_warn(dev,
++			 "link frequency %lld Hz for the %lu Hz clock not listed by firmware\n",
++			 imx241_link_freq_menu[imx241->clk_cfg->link_freq_index],
++			 imx241->clk_cfg->ext_clk);
++
++out:
++	v4l2_fwnode_endpoint_free(&ep);
++	return ret;
++}
++
++/*
++ * Use the external clock at its current rate if a PLL configuration exists
++ * for it: the clock may be shared with another sensor, so its rate is not
++ * changed unless it is unusable.
++ */
++static int imx241_get_clock(struct device *dev, struct imx241 *imx241)
++{
++	unsigned long rate;
++	int ret;
++
++	/*
++	 * devm_v4l2_sensor_clk_get() would set a provided clock to the
++	 * firmware's clock-frequency (19.2 MHz on IPU3 platforms), changing
++	 * the rate under a sensor that shares the clock. Only use it when
++	 * there is no clock provider, where it registers a fixed clock.
++	 */
++	imx241->xclk = devm_clk_get_optional(dev, NULL);
++	if (IS_ERR(imx241->xclk))
++		return dev_err_probe(dev, PTR_ERR(imx241->xclk),
++				     "failed to get clock\n");
++	if (!imx241->xclk) {
++		imx241->xclk = devm_v4l2_sensor_clk_get(dev, NULL);
++		if (IS_ERR(imx241->xclk))
++			return dev_err_probe(dev, PTR_ERR(imx241->xclk),
++					     "failed to get clock\n");
++	}
++
++	rate = clk_get_rate(imx241->xclk);
++	imx241->clk_cfg = imx241_find_clk_cfg(rate);
++	if (imx241->clk_cfg)
++		return 0;
++
++	ret = clk_set_rate(imx241->xclk, IMX241_DEFAULT_EXT_CLK);
++	if (ret)
++		return dev_err_probe(dev, ret,
++				     "clock rate %lu Hz not supported, and setting %u Hz failed\n",
++				     rate, IMX241_DEFAULT_EXT_CLK);
++
++	rate = clk_get_rate(imx241->xclk);
++	imx241->clk_cfg = imx241_find_clk_cfg(rate);
++	if (!imx241->clk_cfg)
++		return dev_err_probe(dev, -EINVAL,
++				     "clock rate %lu Hz not supported (need 24 or 19.2 MHz)\n",
++				     rate);
++
++	return 0;
++}
++
++static int imx241_get_power_resources(struct device *dev,
++				      struct imx241 *imx241)
++{
++	unsigned int i;
++	int ret;
++
++	for (i = 0; i < IMX241_NUM_SUPPLIES; i++)
++		imx241->supplies[i].supply = imx241_supply_names[i];
++
++	ret = devm_regulator_bulk_get(dev, IMX241_NUM_SUPPLIES,
++				      imx241->supplies);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to get regulators\n");
++
++	/*
++	 * The 2.8 V analogue supply is optional: some boards switch an
++	 * external regulator with a GPIO instead of describing it as a
++	 * regulator, and ACPI platforms do not get dummy regulators.
++	 */
++	imx241->avdd = devm_regulator_get_optional(dev, "avdd");
++	if (IS_ERR(imx241->avdd)) {
++		if (PTR_ERR(imx241->avdd) != -ENODEV)
++			return dev_err_probe(dev, PTR_ERR(imx241->avdd),
++					     "failed to get avdd regulator\n");
++		imx241->avdd = NULL;
++	}
++
++	imx241->avdd_gpio = devm_gpiod_get_optional(dev, "avdd-enable",
++						    GPIOD_OUT_LOW);
++	if (IS_ERR(imx241->avdd_gpio))
++		return dev_err_probe(dev, PTR_ERR(imx241->avdd_gpio),
++				     "failed to get avdd-enable gpio\n");
++
++	imx241->reset_gpio = devm_gpiod_get_optional(dev, "reset",
++						     GPIOD_OUT_HIGH);
++	if (IS_ERR(imx241->reset_gpio))
++		return dev_err_probe(dev, PTR_ERR(imx241->reset_gpio),
++				     "failed to get reset gpio\n");
++
++	imx241->powerdown_gpio = devm_gpiod_get_optional(dev, "powerdown",
++							 GPIOD_OUT_HIGH);
++	if (IS_ERR(imx241->powerdown_gpio))
++		return dev_err_probe(dev, PTR_ERR(imx241->powerdown_gpio),
++				     "failed to get powerdown gpio\n");
++
++	return 0;
++}
++
++static int imx241_identify(struct device *dev, struct imx241 *imx241)
++{
++	u64 id, rev;
++	int ret = 0;
++
++	cci_read(imx241->regmap, IMX241_REG_CHIP_ID, &id, &ret);
++	cci_read(imx241->regmap, IMX241_REG_REVISION, &rev, &ret);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to read chip id\n");
++
++	if (id != IMX241_CHIP_ID)
++		return dev_err_probe(dev, -ENODEV,
++				     "chip id mismatch: 0x%04llx, expected 0x%04x\n",
++				     id, IMX241_CHIP_ID);
++
++	dev_info(dev,
++		 "Sony IMX241 rev 0x%02llx, %lu Hz clock, link frequency %lld Hz\n",
++		 rev, imx241->clk_cfg->ext_clk,
++		 imx241_link_freq_menu[imx241->clk_cfg->link_freq_index]);
++
++	return 0;
++}
++
++static int imx241_probe(struct i2c_client *client)
++{
++	struct device *dev = &client->dev;
++	struct imx241 *imx241;
++	int ret;
++
++	imx241 = devm_kzalloc(dev, sizeof(*imx241), GFP_KERNEL);
++	if (!imx241)
++		return -ENOMEM;
++
++	v4l2_i2c_subdev_init(&imx241->sd, client, &imx241_subdev_ops);
++	imx241->sd.internal_ops = &imx241_internal_ops;
++
++	/* Check for the fwnode endpoint before claiming anything else. */
++	if (!fwnode_graph_get_endpoint_count(dev_fwnode(dev), 0))
++		return dev_err_probe(dev, -EPROBE_DEFER,
++				     "waiting for fwnode graph endpoint\n");
++
++	imx241->regmap = devm_cci_regmap_init_i2c(client, 16);
++	if (IS_ERR(imx241->regmap))
++		return dev_err_probe(dev, PTR_ERR(imx241->regmap),
++				     "failed to initialize CCI\n");
++
++	ret = imx241_get_clock(dev, imx241);
++	if (ret)
++		return ret;
++
++	ret = imx241_parse_endpoint(dev, imx241);
++	if (ret)
++		return ret;
++
++	ret = imx241_get_power_resources(dev, imx241);
++	if (ret)
++		return ret;
++
++	ret = imx241_power_on(dev);
++	if (ret)
++		return ret;
++
++	ret = imx241_identify(dev, imx241);
++
++	/*
++	 * Power down right away instead of through autosuspend. The clock may
++	 * be shared with another sensor, and a TPS68470 clock cannot change
++	 * rate while it is prepared: a rate change requested by the other
++	 * sensor's driver during that time would fail.
++	 */
++	imx241_power_off(dev);
++	if (ret)
++		return ret;
++
++	ret = imx241_init_controls(imx241);
++	if (ret)
++		return ret;
++
++	imx241->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
++	imx241->sd.entity.function = MEDIA_ENT_F_CAM_SENSOR;
++	imx241->pad.flags = MEDIA_PAD_FL_SOURCE;
++
++	ret = media_entity_pads_init(&imx241->sd.entity, 1, &imx241->pad);
++	if (ret) {
++		dev_err_probe(dev, ret, "failed to init entity pads\n");
++		goto error_handler_free;
++	}
++
++	imx241->sd.state_lock = imx241->ctrl_handler.lock;
++	ret = v4l2_subdev_init_finalize(&imx241->sd);
++	if (ret) {
++		dev_err_probe(dev, ret, "subdev init error\n");
++		goto error_media_entity;
++	}
++
++	/* The device is powered down, which is the runtime PM default. */
++	pm_runtime_set_autosuspend_delay(dev, 1000);
++	pm_runtime_use_autosuspend(dev);
++	pm_runtime_enable(dev);
++
++	ret = v4l2_async_register_subdev_sensor(&imx241->sd);
++	if (ret) {
++		dev_err_probe(dev, ret, "failed to register sensor sub-device\n");
++		goto error_subdev_cleanup;
++	}
++
++	return 0;
++
++error_subdev_cleanup:
++	pm_runtime_disable(dev);
++	pm_runtime_dont_use_autosuspend(dev);
++	v4l2_subdev_cleanup(&imx241->sd);
++
++error_media_entity:
++	media_entity_cleanup(&imx241->sd.entity);
++
++error_handler_free:
++	v4l2_ctrl_handler_free(&imx241->ctrl_handler);
++
++	return ret;
++}
++
++static void imx241_remove(struct i2c_client *client)
++{
++	struct v4l2_subdev *sd = i2c_get_clientdata(client);
++	struct imx241 *imx241 = to_imx241(sd);
++
++	v4l2_async_unregister_subdev(sd);
++	v4l2_subdev_cleanup(sd);
++	media_entity_cleanup(&sd->entity);
++	v4l2_ctrl_handler_free(&imx241->ctrl_handler);
++
++	pm_runtime_disable(&client->dev);
++	pm_runtime_dont_use_autosuspend(&client->dev);
++	if (!pm_runtime_status_suspended(&client->dev)) {
++		imx241_power_off(&client->dev);
++		pm_runtime_set_suspended(&client->dev);
++	}
++}
++
++static DEFINE_RUNTIME_DEV_PM_OPS(imx241_pm_ops, imx241_power_off,
++				 imx241_power_on, NULL);
++
++static const struct acpi_device_id imx241_acpi_ids[] = {
++	{ "INT347F" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(acpi, imx241_acpi_ids);
++
++static const struct of_device_id imx241_of_match[] = {
++	{ .compatible = "sony,imx241" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, imx241_of_match);
++
++static struct i2c_driver imx241_i2c_driver = {
++	.driver = {
++		.name = "imx241",
++		.acpi_match_table = imx241_acpi_ids,
++		.of_match_table = imx241_of_match,
++		.pm = pm_ptr(&imx241_pm_ops),
++	},
++	.probe = imx241_probe,
++	.remove = imx241_remove,
++};
++module_i2c_driver(imx241_i2c_driver);
++
++MODULE_DESCRIPTION("Sony IMX241 camera sensor driver");
++MODULE_LICENSE("GPL");

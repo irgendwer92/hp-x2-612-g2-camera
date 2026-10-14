@@ -1,0 +1,44 @@
+From 6ead9fd42272f4d14d941d5b856e8045b7a2bfcf Mon Sep 17 00:00:00 2001
+From: irgend wer <irgend@wer.de>
+Date: Wed, 14 Oct 2026 20:37:26 +0200
+Subject: [PATCH 5/6] ipa: libipa: camera_sensor_helper: Add IMX241
+
+Add a camera sensor helper for the Sony IMX241, a 5 MP SMIA 1.0 sensor
+used as the front camera of the HP Pro x2 612 G2.
+
+The sensor reports its analogue gain model in the SMIA limit registers:
+analogue_gain_m0 = 0, c0 = 256, m1 = -1, c1 = 256, i.e. a gain of
+256 / (256 - code) for codes 0 to 224. Its data pedestal register
+(0x0008) reads 64 at 10 bits.
+
+Signed-off-by: TODO <TODO>
+---
+ src/ipa/libipa/camera_sensor_helper.cpp | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/src/ipa/libipa/camera_sensor_helper.cpp b/src/ipa/libipa/camera_sensor_helper.cpp
+index 2e16a28e6..41593b16f 100644
+--- a/src/ipa/libipa/camera_sensor_helper.cpp
++++ b/src/ipa/libipa/camera_sensor_helper.cpp
+@@ -554,6 +554,18 @@ public:
+ };
+ REGISTER_CAMERA_SENSOR_HELPER("imx219", CameraSensorHelperImx219)
+ 
++class CameraSensorHelperImx241 : public CameraSensorHelper
++{
++public:
++	CameraSensorHelperImx241()
++	{
++		/* Data pedestal register 0x0008: 64 at 10 bits. */
++		blackLevel_ = 4096;
++		gain_ = AnalogueGainLinear{ 0, 256, -1, 256 };
++	}
++};
++REGISTER_CAMERA_SENSOR_HELPER("imx241", CameraSensorHelperImx241)
++
+ class CameraSensorHelperImx258 : public CameraSensorHelper
+ {
+ public:
+-- 
+2.56.0
+

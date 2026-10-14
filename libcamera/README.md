@@ -8,6 +8,10 @@ eventually.
 |---|---|
 | `0001` | `ipa: ipu3: Add lens shading correction`: new `Lsc` algorithm (`src/ipa/ipu3/algorithms/lsc.{h,cpp}`) |
 | `0002` | `ipa: ipu3: Add OV8858 tuning file`: `src/ipa/ipu3/data/ov8858.yaml` with an identity (all 1.0) shading table |
+| `0003` | `ipa: libipa: camera_sensor_helper: Add OV8858 black level` (16 at 10 bit) |
+| `0004` | `ipa: ipu3: blc: Use the sensor black level` from the sensor helper |
+| `0005` | `ipa: libipa: camera_sensor_helper: Add IMX241`: front camera gain model (256 / (256 - code)) and black level 64 |
+| `0006` | `libcamera: camera_sensor_properties: Add IMX241`: 1.12 µm pixels, SMIA test patterns |
 
 The system libcamera is not touched. Everything below builds and runs from a
 local tree.

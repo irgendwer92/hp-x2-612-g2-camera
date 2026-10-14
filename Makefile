@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0
 # hp-x2-612-g2-camera: out-of-tree build of patched int3472-tps68470, ipu-bridge
-# and ov8858 modules for the HP Pro x2 612 G2.
+# and ov8858 modules, plus the new imx241 driver, for the HP Pro x2 612 G2.
 #
 #   make                       fetch+patch (scripts/prepare.sh) and build for `uname -r`
 #   make KVER=7.2.9-arch1-1    same, for another installed kernel
@@ -62,7 +62,8 @@ endif
 
 modules:
 	@test -d $(KDIR) || { echo "error: no kernel build dir $(KDIR) (install headers for $(KVER))" >&2; exit 1; }
-	@test -f $(ROOT)/$(HPCAM_SRC)/VENDORED -a -f $(ROOT)/$(HPCAM_SRC)/drivers/media/i2c/ov8858.c || { echo "error: $(HPCAM_SRC) is not prepared (or the last prepare failed); run 'make prepare KVER=$(KVER)'" >&2; exit 1; }
+	@test -f $(ROOT)/$(HPCAM_SRC)/VENDORED -a -f $(ROOT)/$(HPCAM_SRC)/drivers/media/i2c/ov8858.c \
+	      -a -f $(ROOT)/$(HPCAM_SRC)/drivers/media/i2c/imx241.c || { echo "error: $(HPCAM_SRC) is not prepared (or the last prepare failed); run 'make prepare KVER=$(KVER)'" >&2; exit 1; }
 	@echo "building $(TAG) sources from $(HPCAM_SRC) against $(KVER)"
 	$(MAKE) $(KBUILD_ARGS) modules
 

@@ -1,7 +1,7 @@
 From 754bc48f7dc7c54fd81ba6902c2c8dcd584b171e Mon Sep 17 00:00:00 2001
 From: irgend wer <irgend@wer.de>
 Date: Wed, 14 Oct 2026 17:15:14 +0200
-Subject: [PATCH 4/4] ipa: ipu3: blc: Use the sensor black level
+Subject: [PATCH 4/6] ipa: ipu3: blc: Use the sensor black level
 
 The IPU3 black level correction subtracts a hard-coded 64 on every
 sensor. On sensors with a lower pedestal this over-subtracts, crushing

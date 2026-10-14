@@ -2,25 +2,26 @@ From: TODO <TODO>
 Subject: [PATCH] media: ipu-bridge: Add Sony IMX241 (INT347F) to supported sensors
 
 Not for upstream yet, and NOT applied by scripts/prepare.sh (it lives in
-patches/pending/): there is no Linux driver for the IMX241 yet, and
-ipu-bridge must only list sensors that are actually supported. Worse,
-ipu3-cio2 creates its media links and subdev nodes only once every
-sensor in the fwnode graph has bound (cio2_notifier_complete()), so
-listing INT347F without a driver that binds would take the working rear
-OV8858 camera down with it. Move this patch to patches/ together with
-the sensor driver.
+patches/pending/) until the imx241 driver (0006) is confirmed on
+hardware: ipu3-cio2 creates its media links and subdev nodes only once
+every sensor in the fwnode graph has bound (cio2_notifier_complete()),
+so listing INT347F while its driver does not bind would take the
+working rear OV8858 camera down with it. scripts/front-test.sh builds a
+test copy of ipu-bridge with this patch. Move it to patches/ once the
+front camera works.
 
 The Sony IMX241 is found with ACPI HID INT347F on IPU3 based devices
 such as the HP Pro x2 612 G2, where it is the front camera on CSI-2
 port 1 with 2 data lanes.
 
 Add it to the list of sensors supported by ipu-bridge so that the
-fwnode graph is built for it. The link frequency of 499.2 MHz is the
-operating point of the Windows driver (19.2 MHz MCLK, pre-PLL divider
-2, multiplier 104, PLL 998.4 MHz, RAW10 on 2 lanes). It is provisional:
-with a 24 MHz MCLK (the TPS68470 clock is shared with the OV8858, which
-needs 24 MHz) the nearest operating point is 498 MHz, and the driver
-and this entry must agree on the value.
+fwnode graph is built for it, with a link frequency of 498 MHz. The
+TPS68470 clock on this machine is shared with the rear OV8858, which
+runs it at 24 MHz, and the imx241 driver then uses pre-PLL divider 2
+and multiplier 83: PLL 996 MHz, RAW10 on 2 lanes at 996 Mbit/s per
+lane, link frequency 498 MHz. (The Windows driver uses a 19.2 MHz clock
+and 499.2 MHz; the imx241 driver still supports that if it finds the
+clock at 19.2 MHz, and warns that the link frequency is not listed.)
 
 Signed-off-by: TODO <TODO>
 ---
@@ -31,7 +32,7 @@ Signed-off-by: TODO <TODO>
  	/* Omnivision OV7251 */
  	IPU_SENSOR_CONFIG("INT347E", 1, 319200000),
 +	/* Sony IMX241 */
-+	IPU_SENSOR_CONFIG("INT347F", 1, 499200000),
++	IPU_SENSOR_CONFIG("INT347F", 1, 498000000),
  	/* Hynix Hi-556 */
  	IPU_SENSOR_CONFIG("INT3537", 1, 437000000),
  	/* Lontium lt6911uxe */

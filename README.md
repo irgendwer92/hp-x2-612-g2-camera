@@ -8,8 +8,10 @@ of the HP Pro x2 612 G2 tablet on its Intel IPU3, for use through libcamera.
 > "Internal back camera", and it streams in `cam` and `qcam`. Image quality is
 > uncalibrated with stock libcamera; see Risks.
 
-The front camera (ACPI `INT347F`, a Sony IMX241 per HP's Windows driver) has no Linux
-driver and is out of scope.
+The front camera (ACPI `INT347F`, Sony IMX241) has a new driver (`0006`) that is
+not yet tested on hardware; see [`docs/front-camera.md`](docs/front-camera.md).
+Its ipu-bridge entry stays in `patches/pending/` until it works, because listing
+it without a bound driver would also take down the rear camera.
 
 ## Why it doesn't work upstream
 
@@ -29,6 +31,9 @@ The IPU3 camera on this tablet needs three things that mainline Linux is missing
 | `0001` | int3472/tps68470: HP Pro x2 612 G2 regulator, GPIO and DMI board data |
 | `0002` | ipu-bridge: add OV8858 (`INT3477`, 360 MHz link) |
 | `0003` | ov8858: ACPI match, defer until the fwnode graph exists, request 24 MHz xvclk |
+| `0004` | int3472/tps68470: front camera (IMX241) supplies and GPIOs |
+| `0006` | new `imx241` sensor driver (front camera), untested |
+| `pending/0005` | ipu-bridge: add IMX241 (`INT347F`, 498 MHz link); applied only by `scripts/front-test.sh` |
 
 The hardware facts behind these patches, read from ACPI at runtime, are in
 [`docs/hardware.md`](docs/hardware.md).
