@@ -1,4 +1,4 @@
-From 81deff341dbdd8090875d43e9538264e1d8d61ba Mon Sep 17 00:00:00 2001
+From 364a918df6034520ba194a315ef9df7405f75de1 Mon Sep 17 00:00:00 2001
 From: irgend wer <irgend@wer.de>
 Date: Wed, 14 Oct 2026 21:43:08 +0200
 Subject: [PATCH 8/8] ipa: ipu3: Add IMX241 tuning file
@@ -8,8 +8,8 @@ Content-Transfer-Encoding: 8bit
 
 The IMX241 front camera of the HP Pro x2 612 G2 has small 1.12 µm
 pixels and looks dim at the default AGC target. Raise the relative
-luminance target to 0.24; with the sensor digital gain the AGC still
-reaches it at 30 fps in typical indoor light.
+luminance target to 0.36; with the sensor digital gain the AGC reaches
+it at 30 fps in evening indoor light (about 3.2x digital gain).
 
 Signed-off-by: TODO <TODO>
 ---
@@ -20,7 +20,7 @@ Signed-off-by: TODO <TODO>
 
 diff --git a/src/ipa/ipu3/data/imx241.yaml b/src/ipa/ipu3/data/imx241.yaml
 new file mode 100644
-index 000000000..2d289cba2
+index 000000000..120396252
 --- /dev/null
 +++ b/src/ipa/ipu3/data/imx241.yaml
 @@ -0,0 +1,15 @@
@@ -31,10 +31,10 @@ index 000000000..2d289cba2
 +algorithms:
 +  - Af:
 +  - Agc:
-+      # The IMX241 (1.12 µm pixels) is a dim front-facing sensor; aim a
-+      # little brighter than the default 0.16. The AGC reaches this at
-+      # 30 fps with the sensor digital gain.
-+      relativeLuminanceTarget: 0.24
++      # The IMX241 (1.12 µm pixels) is a dim front-facing sensor; aim
++      # brighter than the default 0.16. In evening indoor light the AGC
++      # reaches this at 30 fps with about 3.2x sensor digital gain.
++      relativeLuminanceTarget: 0.36
 +  - Awb:
 +  - BlackLevelCorrection:
 +  - ToneMapping:
