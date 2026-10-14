@@ -32,8 +32,8 @@ The IPU3 camera on this tablet needs three things that mainline Linux is missing
 | `0002` | ipu-bridge: add OV8858 (`INT3477`, 360 MHz link) |
 | `0003` | ov8858: ACPI match, defer until the fwnode graph exists, request 24 MHz xvclk |
 | `0004` | int3472/tps68470: front camera (IMX241) supplies and GPIOs |
-| `0006` | new `imx241` sensor driver (front camera), streams at 2592x1944 and 1296x972 |
 | `0005` | ipu-bridge: add IMX241 (`INT347F`, 498 MHz link) |
+| `0006` | new `imx241` sensor driver (front camera), streams at 2592x1944 and 1296x972 |
 
 The hardware facts behind these patches, read from ACPI at runtime, are in
 [`docs/hardware.md`](docs/hardware.md).
@@ -115,9 +115,14 @@ version, `update.sh` stops with a message and the series needs a rebase.
 
 ## Upstreaming
 
-The patches are in `git format-patch` style but carry
-`Signed-off-by: TODO <TODO>` placeholders. They should go upstream only after
-they have been confirmed on real hardware.
+The kernel patches (`patches/`) and libcamera patches (`libcamera/patches/`)
+are in `git format-patch` form and signed off, but have not been submitted yet:
+
+- `0001`, `0004`: platform/x86 (int3472 / TPS68470 board data)
+- `0002`, `0003`, `0005`, `0006`: media (ipu-bridge, ov8858, new imx241 driver)
+- libcamera: the IPU3 lens shading correction overlaps with an upstream series
+  by Daniel Scally (patchwork 27072); the sensor helpers, IPU3 black level and
+  digital gain changes and the tuning files are independent.
 
 ## License
 
