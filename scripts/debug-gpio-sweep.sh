@@ -5,6 +5,7 @@
 # 00 88 58) at 0x10 and 0x36. Also probes the module EEPROM at 0x50 to tell
 # "module unpowered" apart from "sensor held in reset/powerdown".
 # GPIOs 7/9 (s_enable/s_resetn) are owned by the driver and left alone.
+# Only targeted reads: a blind i2cdetect scan wedged this bus once.
 # Needs: libgpiod (v2), i2c-tools; test-load.sh and build-debug.sh done first.
 #   sudo scripts/debug-gpio-sweep.sh
 set -eu
@@ -27,7 +28,14 @@ say() { printf '\n==> %s\n' "$*"; }
 rd() { # addr reg_hi reg_lo nbytes
 	timeout 2 i2ctransfer -f -y "$bus" w2@"$1" "$2" "$3" r"$4" 2>&1 | tr '\n' ' '
 }
+# TPS68470 REVID register (0xff) doubles as a bus-health check: if the PMIC no
+# longer answers, the bus is wedged; stop instead of piling up timeouts.
+bus_ok() {
+	timeout 2 i2ctransfer -f -y "$bus" w1@0x48 0xff r1 >/dev/null 2>&1
+}
 probe() {
+	bus_ok || { echo "  !! bus i2c-$bus stopped responding before step '$1'; aborting." >&2
+		echo "  !! Power the machine off completely to reset the bus and PMIC." >&2; exit 2; }
 	printf '  %-14s 0x10: %-28s 0x36: %-28s eeprom 0x50: %s\n' "$1" \
 		"$(rd 0x10 0x30 0x0a 3)" "$(rd 0x36 0x30 0x0a 3)" \
 		"$(timeout 2 i2ctransfer -f -y "$bus" w1@0x50 0x00 r4 2>&1 | tr '\n' ' ')"

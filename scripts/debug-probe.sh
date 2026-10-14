@@ -39,7 +39,7 @@ if dmesg | tail -n +"$((mark + 1))" | grep -q 'dbg: ID read failed'; then
 	grep -iE 'clock|tps68470|INT3477|xvclk' $dbg/clk/clk_summary 2>&1 | sed 's/^/  /'
 	say "PMIC GPIOs"
 	awk '/tps68470/{p=1} p&&/^$/{exit} p' $dbg/gpio 2>&1 | sed 's/^/  /'
-	if command -v i2cdetect >/dev/null; then
+	if false && command -v i2cdetect >/dev/null; then  # disabled: blind scans wedged i2c-2
 		say "i2c bus scan (bus of the PMIC/sensor)"
 		bus=$(basename "$(readlink -f /sys/bus/i2c/devices/i2c-INT3477:00/..)")
 		echo "  $bus"
