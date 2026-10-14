@@ -28,3 +28,18 @@ Consumer device: `i2c-INT3477:00`
 - GPIOs (tps68470-gpio, guessed from CRD-G / Surface Go): 9 = `reset` (active low), 7 = `powerdown` (active low)
 - Clock: `xvclk` — consumers are named automatically by tps68470.c from the PMIC ACPI dependents; no board data needed. Driver modes assume 24 MHz.
 - ipu-bridge: `IPU_SENSOR_CONFIG("INT3477", 1, 360000000)` (OV8858_LINK_FREQ).
+
+## Bring-up log
+### 2026-10-14, first hardware tests (patches 0001–0003, kernel 7.2.9-arch1-1)
+- PMIC probes with the board data; `i2c-INT3477:00` is enumerated; ipu3-cio2 reports
+  "Found supported sensor INT3477:00" / "Connected 1 cameras".
+- Measured while powered (debugfs): CORE 1200 mV → dvdd, ANA 2815 mV → avdd,
+  VSIO 1800 mV → dovdd, VIO 1800 mV always-on, VCM off; tps68470-clk 24 MHz enabled for
+  `xvclk`; s_enable (7) and s_resetn (9) driven high (released).
+- Chip-ID read (0x300a) at 0x10 is NACKed (-121), also with 20 ms settle delays.
+- A blind `i2cdetect -r` scan of i2c-2 during the power hold wedged the bus
+  (designware "controller timed out" from somewhere in 0x11–0x1f onward). The PMIC became
+  unreachable, so the rails could not be switched off until a full power-off.
+  Do not scan this bus; use targeted reads only.
+- Open questions: reset/powerdown on PMIC GPIOs other than 7/9 (Dell 7212 uses 3/4)?
+  Sensor at another address (0x36)? Does the module EEPROM (0x50) answer when powered?
