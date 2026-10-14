@@ -1,6 +1,6 @@
-From 8392658ab1e7790cb7d5288e706a3104ed4ad293 Mon Sep 17 00:00:00 2001
-From: irgend wer <irgend@wer.de>
-Date: Wed, 14 Oct 2026 17:15:14 +0200
+From b99d3c4d3db90f7828384b5353753e43a901b2bf Mon Sep 17 00:00:00 2001
+From: Richard Fritz <gh@chaos4all.de>
+Date: Wed, 14 Oct 2026 22:37:09 +0200
 Subject: [PATCH 3/8] ipa: libipa: camera_sensor_helper: Add OV8858 black level
 
 The ov8858 kernel driver programs the sensor's BLC target register
@@ -11,7 +11,7 @@ channel.
 Report it from the sensor helper so that IPAs which don't get the level
 from a tuning file use the right value.
 
-Signed-off-by: TODO <TODO>
+Signed-off-by: Richard Fritz <gh@chaos4all.de>
 ---
  src/ipa/libipa/camera_sensor_helper.cpp | 7 +++++++
  1 file changed, 7 insertions(+)

@@ -1,4 +1,4 @@
-From: TODO <TODO>
+From: Richard Fritz <gh@chaos4all.de>
 Subject: [PATCH] platform/x86: int3472: tps68470: Add HP Pro x2 612 G2 front camera supplies
 
 Not for upstream yet: unverified on hardware.
@@ -21,7 +21,7 @@ Add the regulator consumers (named after the ccs driver's supplies) and
 a GPIO lookup table for i2c-INT347F:00. Nothing is powered unless a
 driver binds to the sensor.
 
-Signed-off-by: TODO <TODO>
+Signed-off-by: Richard Fritz <gh@chaos4all.de>
 ---
 --- a/drivers/platform/x86/intel/int3472/tps68470_board_data.c
 +++ b/drivers/platform/x86/intel/int3472/tps68470_board_data.c

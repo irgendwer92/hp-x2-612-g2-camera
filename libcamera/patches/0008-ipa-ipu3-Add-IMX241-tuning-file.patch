@@ -1,6 +1,6 @@
-From a51c6b0fdabbba0d631949b016a32796fb950ff5 Mon Sep 17 00:00:00 2001
-From: irgend wer <irgend@wer.de>
-Date: Wed, 14 Oct 2026 21:43:08 +0200
+From 8901046e68bb922213e518f93864be7da3d85674 Mon Sep 17 00:00:00 2001
+From: Richard Fritz <gh@chaos4all.de>
+Date: Wed, 14 Oct 2026 22:37:09 +0200
 Subject: [PATCH 8/8] ipa: ipu3: Add IMX241 tuning file
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
@@ -12,7 +12,7 @@ luminance target to 0.32; with the sensor digital gain the AGC reaches
 it at 30 fps in evening indoor light (about 2.8x digital gain, between
 the measured 2.07x at 0.24 and 3.24x at 0.36).
 
-Signed-off-by: TODO <TODO>
+Signed-off-by: Richard Fritz <gh@chaos4all.de>
 ---
  src/ipa/ipu3/data/imx241.yaml | 15 +++++++++++++++
  src/ipa/ipu3/data/meson.build |  1 +

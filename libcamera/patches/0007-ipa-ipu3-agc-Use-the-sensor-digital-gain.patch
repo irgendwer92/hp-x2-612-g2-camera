@@ -1,6 +1,6 @@
-From 233f5812c5de4ac42ca964e080c8afa3e31b7ed6 Mon Sep 17 00:00:00 2001
-From: irgend wer <irgend@wer.de>
-Date: Wed, 14 Oct 2026 21:39:21 +0200
+From e898d4904720c6513e7eff5c299e82f4a39da441 Mon Sep 17 00:00:00 2001
+From: Richard Fritz <gh@chaos4all.de>
+Date: Wed, 14 Oct 2026 22:37:09 +0200
 Subject: [PATCH 7/8] ipa: ipu3: agc: Use the sensor digital gain
 
 The IPU3 AGC only drives exposure time and analogue gain, and discards
@@ -17,7 +17,7 @@ delay it like the analogue gain. The frame rate is not changed.
 
 On the IMX241 the AGC now settles at about 1.5x digital gain at 30 fps.
 
-Signed-off-by: TODO <TODO>
+Signed-off-by: Richard Fritz <gh@chaos4all.de>
 ---
  src/ipa/ipu3/algorithms/agc.cpp      | 12 +++++++++-
  src/ipa/ipu3/ipa_context.h           |  4 ++++

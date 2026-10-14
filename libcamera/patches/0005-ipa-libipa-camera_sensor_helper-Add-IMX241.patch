@@ -1,6 +1,6 @@
-From 6ead9fd42272f4d14d941d5b856e8045b7a2bfcf Mon Sep 17 00:00:00 2001
-From: irgend wer <irgend@wer.de>
-Date: Wed, 14 Oct 2026 20:37:26 +0200
+From 30a84e2a73cce1571d5f3f64ebb0fd2336227974 Mon Sep 17 00:00:00 2001
+From: Richard Fritz <gh@chaos4all.de>
+Date: Wed, 14 Oct 2026 22:37:09 +0200
 Subject: [PATCH 5/8] ipa: libipa: camera_sensor_helper: Add IMX241
 
 Add a camera sensor helper for the Sony IMX241, a 5 MP SMIA 1.0 sensor
@@ -11,7 +11,7 @@ analogue_gain_m0 = 0, c0 = 256, m1 = -1, c1 = 256, i.e. a gain of
 256 / (256 - code) for codes 0 to 224. Its data pedestal register
 (0x0008) reads 64 at 10 bits.
 
-Signed-off-by: TODO <TODO>
+Signed-off-by: Richard Fritz <gh@chaos4all.de>
 ---
  src/ipa/libipa/camera_sensor_helper.cpp | 12 ++++++++++++
  1 file changed, 12 insertions(+)

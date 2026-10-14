@@ -1,4 +1,4 @@
-From: TODO <TODO>
+From: Richard Fritz <gh@chaos4all.de>
 Subject: [PATCH] media: ipu-bridge: Add Sony IMX241 (INT347F) to supported sensors
 
 Note: ipu3-cio2 creates its media links and subdev nodes only once every
@@ -19,7 +19,7 @@ lane, link frequency 498 MHz. (The Windows driver uses a 19.2 MHz clock
 and 499.2 MHz; the imx241 driver still supports that if it finds the
 clock at 19.2 MHz, and warns that the link frequency is not listed.)
 
-Signed-off-by: TODO <TODO>
+Signed-off-by: Richard Fritz <gh@chaos4all.de>
 ---
 --- a/drivers/media/pci/intel/ipu-bridge.c
 +++ b/drivers/media/pci/intel/ipu-bridge.c

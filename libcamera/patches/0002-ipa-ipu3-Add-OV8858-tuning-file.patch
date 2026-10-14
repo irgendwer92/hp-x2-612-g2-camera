@@ -1,6 +1,6 @@
-From 599779412da5336c38b99885cb8381d3e53b44d4 Mon Sep 17 00:00:00 2001
-From: irgend wer <irgend@wer.de>
-Date: Wed, 14 Oct 2026 17:01:17 +0200
+From 317e3c67aec6bf7d2be52d328a39d4ca074ccc4d Mon Sep 17 00:00:00 2001
+From: Richard Fritz <gh@chaos4all.de>
+Date: Wed, 14 Oct 2026 22:37:09 +0200
 Subject: [PATCH 2/8] ipa: ipu3: Add OV8858 tuning file
 
 Add a tuning file for the OmniVision OV8858, based on the uncalibrated
@@ -8,7 +8,7 @@ tuning file with an additional Lsc entry. The shading tables contain
 unity gains, as a placeholder for calibration data, which results in the
 same image as without lens shading correction.
 
-Signed-off-by: TODO <TODO>
+Signed-off-by: Richard Fritz <gh@chaos4all.de>
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  src/ipa/ipu3/data/meson.build |   1 +

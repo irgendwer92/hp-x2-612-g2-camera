@@ -1,4 +1,4 @@
-From: TODO <TODO>
+From: Richard Fritz <gh@chaos4all.de>
 Subject: [PATCH] media: i2c: Add Sony IMX241 driver
 
 Not for upstream yet: unverified on hardware.
@@ -44,7 +44,7 @@ module:
 The Kconfig and Makefile entries are not part of this patch: this tree
 builds the driver out of tree.
 
-Signed-off-by: TODO <TODO>
+Signed-off-by: Richard Fritz <gh@chaos4all.de>
 ---
 --- /dev/null
 +++ b/drivers/media/i2c/imx241.c
