@@ -90,10 +90,10 @@ static int imx241_probe_probe(struct i2c_client *client)
 	if (IS_ERR(pwdn))
 		return dev_err_probe(dev, PTR_ERR(pwdn), "powerdown gpio\n");
 
-	vio = devm_regulator_get(dev, "vio");
+	vio = devm_regulator_get_optional(dev, "vio");
 	if (IS_ERR(vio))
 		return dev_err_probe(dev, PTR_ERR(vio), "vio\n");
-	vcore = devm_regulator_get(dev, "vcore");
+	vcore = devm_regulator_get_optional(dev, "vcore");
 	if (IS_ERR(vcore))
 		return dev_err_probe(dev, PTR_ERR(vcore), "vcore\n");
 

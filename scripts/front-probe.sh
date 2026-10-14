@@ -20,6 +20,10 @@ shift
 [ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
 [ -f "$out/imx241_probe.ko" ] || { echo "build first: $0" >&2; exit 1; }
 [ -e /sys/bus/i2c/devices/i2c-INT347F:00 ] || { echo "i2c-INT347F:00 missing (PMIC not probed?)" >&2; exit 1; }
+if [ ! -e /sys/bus/platform/devices/tps68470-regulator/driver ]; then
+	echo "error: tps68470-regulator is not bound (check: journalctl -k -b | grep tps68470)" >&2
+	exit 1
+fi
 if ! modinfo -n intel_skl_int3472_tps68470 | grep -q /updates/; then
 	echo "warning: the PMIC module is not the DKMS one; patch 0004 may be missing" >&2
 fi
