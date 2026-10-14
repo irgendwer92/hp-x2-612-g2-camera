@@ -1,18 +1,20 @@
 #!/bin/sh
-# Build ov8858.ko with the bring-up diagnostics from debug/ on top of patches/.
-# Output: build/debug/ov8858.ko. Run as a normal user; see scripts/debug-probe.sh.
+# Build all three modules with the bring-up experiments from debug/*.patch
+# applied on top of patches/. Output: build/debug/*.ko (the normal build in the
+# repo root is left alone). Run as a normal user, then e.g.
+#   sudo scripts/test-load.sh build/debug
 set -eu
 repo=$(cd "$(dirname "$0")/.." && pwd)
 kver=${1:-$(uname -r)}
 tag=$("$repo/scripts/prepare.sh" --tag "$kver")
 "$repo/scripts/prepare.sh" "$kver"
 out=$repo/build/debug
-rm -rf "$out" && mkdir -p "$out/drivers/media/i2c"
-cp "$repo/build/$tag/src/drivers/media/i2c/ov8858.c" "$out/drivers/media/i2c/"
+rm -rf "$out" && mkdir -p "$out"
+cp -r "$repo/build/$tag/src" "$out/src"
 for p in "$repo"/debug/*.patch; do
-	patch -d "$out" -p1 --forward --batch < "$p"
+	echo "applying $(basename "$p")"
+	patch -d "$out/src" -p1 --forward --batch < "$p"
 done
-cp "$out/drivers/media/i2c/ov8858.c" "$out/ov8858.c"
-echo 'obj-m := ov8858.o' > "$out/Kbuild"
-make -C "/lib/modules/$kver/build" M="$out" modules
-echo "built $out/ov8858.ko"
+cp "$repo/Kbuild" "$out/Kbuild"
+make -C "/lib/modules/$kver/build" M="$out" HPCAM_SRC=src modules
+ls "$out"/*.ko
