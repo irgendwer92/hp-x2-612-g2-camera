@@ -9,3 +9,6 @@ modules.order
 packaging/arch/src/
 packaging/arch/pkg/
 *.pkg.tar.*
+# lens-shading calibration data (tools/lsc)
+/captures/
+/lsc-out/
