@@ -1,0 +1,5 @@
+arch-upstream/
+src/
+pkg/
+libcamera/
+*.pkg.tar.*

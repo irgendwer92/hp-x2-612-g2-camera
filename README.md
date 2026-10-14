@@ -77,6 +77,25 @@ stock modules stay in use.
 `patches/*.patch`. If a patch doesn't apply cleanly, the build fails instead of
 going ahead with a half-patched tree.
 
+## Patched libcamera (both cameras, better image)
+
+Stock libcamera shows only the rear camera, without lens shading correction.
+`packaging/libcamera/` builds Arch's libcamera (`libcamera`, `libcamera-ipa`,
+`libcamera-tools`) with the patches from `libcamera/patches/`, at Arch's current
+version with `pkgrel` + `.1`. If `lsc-out/ov8858.yaml` exists (from
+`tools/lsc/`), it is packaged as the OV8858 tuning file.
+
+```sh
+packaging/libcamera/update.sh          # sync with Arch, build, install
+sudo install -Dm644 packaging/libcamera/hp-x2-libcamera.hook /etc/pacman.d/hooks/hp-x2-libcamera.hook
+```
+
+There is no `IgnorePkg`: Arch updates install normally. When one replaces the
+patched build with a stock one, the pacman hook prints a reminder to run
+`update.sh` again. Until then the rear camera keeps working, without the front
+camera and the image improvements. If a patch stops applying to a new libcamera
+version, `update.sh` stops with a message and the series needs a rebase.
+
 ## Risks
 
 - **Rail mapping.** The BIOS leaves the PMIC hint fields empty. The rails in

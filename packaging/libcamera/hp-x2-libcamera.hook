@@ -1,0 +1,12 @@
+# Install to /etc/pacman.d/hooks/ to get a reminder when an Arch update
+# replaces the patched libcamera (HP Pro x2 612 G2) with a stock build.
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = libcamera
+
+[Action]
+Description = Checking for the HP Pro x2 612 G2 libcamera patches...
+When = PostTransaction
+Exec = /usr/bin/sh -c 'pacman -Qi libcamera | grep -q "HP Pro x2 612 G2 patches" || echo "==> libcamera is now a stock build: the front camera and the image improvements are gone. Rebuild with packaging/libcamera/update.sh in the hp-x2-612-g2-camera repository."'
