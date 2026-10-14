@@ -1,0 +1,781 @@
+From a72b57136d9b5b955c36d2856af28f96891cef05 Mon Sep 17 00:00:00 2001
+From: irgend wer <irgend@wer.de>
+Date: Wed, 14 Oct 2026 17:01:17 +0200
+Subject: [PATCH 1/2] ipa: ipu3: Add lens shading correction
+
+The ImgU has a shading correction (SHD) block that multiplies each Bayer
+pixel by a per-channel gain, bilinearly interpolated from a grid of gain
+values. The IPU3 IPA doesn't configure it, leaving the kernel defaults
+(unity gains) in place, so images from sensors with strong lens shading
+show vignetting and colour casts.
+
+Add an Lsc algorithm that programs the SHD block from tuning data. The
+tuning data describes the shading gains on a uniform grid of sample
+points spanning the full sensor pixel array, for one or more colour
+temperatures:
+
+  - Lsc:
+      grid: [ 33, 25 ]
+      sets:
+        - ct: 5000
+          r: [ ... ]
+          gr: [ ... ]
+          gb: [ ... ]
+          b: [ ... ]
+
+At configure time, the algorithm selects the finest hardware grid that
+covers the BDS output frame within the hardware limits (73 nodes per
+line, 28 LUT sets of 146 cells, power-of-two block sizes), maps each grid
+node through the BDS scaling, the input feeder crop and the sensor
+analogue crop and binning to the pixel array, and resamples the tuning
+tables bilinearly. The channels are named after the pixel colour, as the
+kernel realigns the input frame to the GRBG order used internally by the
+ImgU.
+
+At runtime, the tables are interpolated by the colour temperature
+estimated by the AWB algorithm, converted to the hardware format (12-bit
+values with 10 fractional bits added to an implicit unity gain, with the
+gain factor raised automatically when gains exceed 5.0) and written to
+the parameters buffer for every frame. The LensShadingCorrectionEnable
+control allows disabling the correction at runtime.
+
+When no Lsc entry is present in the tuning file, the IPA behaves as
+before.
+
+Signed-off-by: TODO <TODO>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/ipa/ipu3/algorithms/lsc.cpp     | 567 ++++++++++++++++++++++++++++
+ src/ipa/ipu3/algorithms/lsc.h       |  74 ++++
+ src/ipa/ipu3/algorithms/meson.build |   1 +
+ src/ipa/ipu3/ipa_context.cpp        |  14 +
+ src/ipa/ipu3/ipa_context.h          |   8 +
+ 5 files changed, 664 insertions(+)
+ create mode 100644 src/ipa/ipu3/algorithms/lsc.cpp
+ create mode 100644 src/ipa/ipu3/algorithms/lsc.h
+
+diff --git a/src/ipa/ipu3/algorithms/lsc.cpp b/src/ipa/ipu3/algorithms/lsc.cpp
+new file mode 100644
+index 000000000..01da1748d
+--- /dev/null
++++ b/src/ipa/ipu3/algorithms/lsc.cpp
+@@ -0,0 +1,567 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/*
++ * Copyright (C) 2026, the libcamera contributors
++ *
++ * IPU3 Lens Shading Correction
++ */
++
++#include "lsc.h"
++
++#include <algorithm>
++#include <cmath>
++
++#include <libcamera/base/log.h>
++#include <libcamera/base/utils.h>
++
++#include <libcamera/control_ids.h>
++
++#include "libcamera/internal/value_node.h"
++
++/**
++ * \file lsc.h
++ * \brief IPU3 Lens Shading Correction
++ */
++
++namespace libcamera {
++
++namespace ipa {
++
++namespace {
++
++void interpolateVector(const std::vector<double> &a, const std::vector<double> &b,
++		       std::vector<double> &dest, double lambda)
++{
++	ASSERT(a.size() == b.size());
++	dest.resize(a.size());
++	for (size_t i = 0; i < a.size(); i++)
++		dest[i] = a[i] * (1.0 - lambda) + b[i] * lambda;
++}
++
++} /* namespace */
++
++template<>
++void Interpolator<ipu3::algorithms::Lsc::Components>::
++	interpolate(const ipu3::algorithms::Lsc::Components &a,
++		    const ipu3::algorithms::Lsc::Components &b,
++		    ipu3::algorithms::Lsc::Components &dest,
++		    double lambda)
++{
++	interpolateVector(a.r, b.r, dest.r, lambda);
++	interpolateVector(a.gr, b.gr, dest.gr, lambda);
++	interpolateVector(a.gb, b.gb, dest.gb, lambda);
++	interpolateVector(a.b, b.b, dest.b, lambda);
++}
++
++} /* namespace ipa */
++
++namespace ipa::ipu3::algorithms {
++
++/**
++ * \class Lsc
++ * \brief IPU3 Lens Shading Correction algorithm
++ *
++ * Lens shading (vignetting and colour shading) is corrected by the ImgU SHD
++ * block, which multiplies every Bayer pixel by a per-channel gain bilinearly
++ * interpolated from a grid of gain values.
++ *
++ * The SHD grid is defined in the coordinate system of the BDS output frame.
++ * Its nodes are spaced by power-of-two pixel counts, horizontally and
++ * vertically, starting at the top-left pixel of the frame. The grid is
++ * limited to 73 nodes per line, and the gain table is stored in 28 sets of
++ * 146 nodes, each set holding an integer number of grid lines. Gains are
++ * stored as 12-bit unsigned fixed-point values on top of an implicit unity
++ * gain, with 10 fractional bits, giving a [1.0, 5.0[ range. The range can be
++ * extended to [1.0, 9.0[ or [1.0, 17.0[ at the expense of precision through
++ * the gain factor parameter.
++ *
++ * The tuning data describes the shading gains on a uniform grid covering the
++ * full sensor pixel array, independently of the sensor and ImgU
++ * configuration:
++ *
++ * \code{.yaml}
++ * - Lsc:
++ *     grid: [ 33, 25 ]
++ *     sets:
++ *       - ct: 5000
++ *         r: [ ... ]
++ *         gr: [ ... ]
++ *         gb: [ ... ]
++ *         b: [ ... ]
++ * \endcode
++ *
++ * The \a grid gives the number of sample points horizontally and vertically.
++ * The first and last sample points of each line and column are located on the
++ * first and last pixels of the pixel array, with uniform spacing in between.
++ * The \a sets list contains one or more tables, each for a colour temperature
++ * \a ct in Kelvin. Each table contains one gain value per sample point for
++ * each of the red, green-red, green-blue and blue channels, in row-major
++ * order. The channels are named after the colour of the pixels they apply to,
++ * regardless of the sensor Bayer pattern. Gain values are expected to be
++ * greater than or equal to 1.0, smaller values are clamped to 1.0.
++ *
++ * At configuration time, the tuning tables are resampled on the hardware
++ * grid, taking the sensor analogue crop and binning, the ImgU input feeder
++ * crop and the BDS scaling into account. When multiple sets are provided, the
++ * gains are interpolated at runtime based on the colour temperature estimated
++ * by the AWB algorithm.
++ */
++
++LOG_DEFINE_CATEGORY(IPU3Lsc)
++
++namespace {
++
++/* Maximum grid width, constrained by the number of cells per LUT set. */
++constexpr unsigned int kMaxGridWidth = 73;
++constexpr unsigned int kMinGridSize = 8;
++constexpr unsigned int kMaxGridHeight = 128;
++
++/* Block sizes, expressed as log2 of the number of pixels. */
++constexpr unsigned int kMinBlockSizeLog2 = 3;
++constexpr unsigned int kMaxBlockSizeLog2 = 7;
++
++/* Gain LUT format: unsigned 2.10 fixed-point value added to a 1.0 gain. */
++constexpr unsigned int kGainFractionalBits = 10;
++constexpr unsigned int kGainMaxValue = (1 << 12) - 1;
++constexpr unsigned int kMaxGainFactor = 2;
++
++constexpr unsigned int kColourTemperatureQuantization = 10;
++constexpr unsigned int kDefaultColourTemperature = 5000;
++
++unsigned int quantize(unsigned int value, unsigned int step)
++{
++	return std::lround(value / static_cast<double>(step)) * step;
++}
++
++/*
++ * Compute the number of grid nodes needed to cover \a size pixels with blocks
++ * of 2^log2 pixels. Gains are interpolated between the two nodes surrounding
++ * each pixel, the last pixel thus needs a node on its right side.
++ */
++unsigned int gridNodes(unsigned int size, unsigned int log2)
++{
++	return std::max(((size - 1) >> log2) + 2, kMinGridSize);
++}
++
++} /* namespace */
++
++Lsc::Lsc()
++	: config_{}, lut_{}, lastAppliedCt_(0), lastAppliedQuantizedCt_(0),
++	  lutValid_(false)
++{
++}
++
++int Lsc::parseSet(const ValueNode &set, Components &components) const
++{
++	const unsigned int size = tuningGrid_.width * tuningGrid_.height;
++
++	const std::pair<const char *, std::vector<double> *> channels[] = {
++		{ "r", &components.r },
++		{ "gr", &components.gr },
++		{ "gb", &components.gb },
++		{ "b", &components.b },
++	};
++
++	for (const auto &[name, table] : channels) {
++		std::optional<std::vector<double>> values =
++			set[name].get<std::vector<double>>();
++		if (!values) {
++			LOG(IPU3Lsc, Error)
++				<< "Missing or invalid '" << name << "' table";
++			return -EINVAL;
++		}
++
++		if (values->size() != size) {
++			LOG(IPU3Lsc, Error)
++				<< "Invalid '" << name << "' table size "
++				<< values->size() << ", expected " << size;
++			return -EINVAL;
++		}
++
++		for (double gain : *values) {
++			if (!std::isfinite(gain) || gain <= 0.0) {
++				LOG(IPU3Lsc, Error)
++					<< "Invalid gain " << gain << " in '"
++					<< name << "' table";
++				return -EINVAL;
++			}
++		}
++
++		if (std::any_of(values->begin(), values->end(),
++				[](double gain) { return gain < 1.0; }))
++			LOG(IPU3Lsc, Warning)
++				<< "Gains smaller than 1.0 in '" << name
++				<< "' table will be clamped";
++
++		*table = std::move(*values);
++	}
++
++	return 0;
++}
++
++/**
++ * \copydoc libcamera::ipa::Algorithm::init
++ */
++int Lsc::init(IPAContext &context, const ValueNode &tuningData)
++{
++	std::optional<std::vector<uint32_t>> grid =
++		tuningData["grid"].get<std::vector<uint32_t>>();
++	if (!grid || grid->size() != 2 || (*grid)[0] < 2 || (*grid)[1] < 2) {
++		LOG(IPU3Lsc, Error)
++			<< "Invalid or missing 'grid', expected [ width, height ]";
++		return -EINVAL;
++	}
++
++	tuningGrid_ = Size((*grid)[0], (*grid)[1]);
++
++	const ValueNode &sets = tuningData["sets"];
++	if (!sets.isList() || sets.size() == 0) {
++		LOG(IPU3Lsc, Error) << "Invalid or missing 'sets' list";
++		return -EINVAL;
++	}
++
++	tuningSets_.clear();
++
++	for (const ValueNode &set : sets.asList()) {
++		std::optional<uint32_t> ct = set["ct"].get<uint32_t>();
++		if (!ct) {
++			LOG(IPU3Lsc, Error) << "Missing 'ct' in set";
++			return -EINVAL;
++		}
++
++		if (tuningSets_.count(*ct)) {
++			LOG(IPU3Lsc, Error)
++				<< "Duplicate set for colour temperature " << *ct;
++			return -EINVAL;
++		}
++
++		Components components;
++		int ret = parseSet(set, components);
++		if (ret) {
++			LOG(IPU3Lsc, Error)
++				<< "Invalid set for colour temperature " << *ct;
++			return ret;
++		}
++
++		tuningSets_[*ct] = std::move(components);
++	}
++
++	context.ctrlMap[&controls::LensShadingCorrectionEnable] =
++		ControlInfo(false, true, true);
++
++	LOG(IPU3Lsc, Debug)
++		<< "Loaded " << tuningSets_.size() << " set(s) on a "
++		<< tuningGrid_ << " grid";
++
++	return 0;
++}
++
++/*
++ * Bilinearly sample a tuning table at the fractional grid positions \a xPos
++ * and \a yPos, expressed in units of the tuning grid. The result is stored in
++ * row-major order.
++ */
++std::vector<double> Lsc::resample(const std::vector<double> &table,
++				  const std::vector<double> &xPos,
++				  const std::vector<double> &yPos) const
++{
++	const unsigned int width = tuningGrid_.width;
++	std::vector<double> samples;
++
++	samples.reserve(xPos.size() * yPos.size());
++
++	for (double y : yPos) {
++		unsigned int y0 = std::min<unsigned int>(y, tuningGrid_.height - 2);
++		double fy = y - y0;
++
++		for (double x : xPos) {
++			unsigned int x0 = std::min<unsigned int>(x, width - 2);
++			double fx = x - x0;
++
++			const double *row0 = &table[y0 * width + x0];
++			const double *row1 = row0 + width;
++
++			double top = row0[0] * (1.0 - fx) + row0[1] * fx;
++			double bottom = row1[0] * (1.0 - fx) + row1[1] * fx;
++
++			samples.push_back(top * (1.0 - fy) + bottom * fy);
++		}
++	}
++
++	return samples;
++}
++
++/**
++ * \copydoc libcamera::ipa::Algorithm::configure
++ */
++int Lsc::configure(IPAContext &context, const IPAConfigInfo &configInfo)
++{
++	const IPACameraSensorInfo &sensorInfo = configInfo.sensorInfo;
++	const Size &pixelArray = sensorInfo.activeAreaSize;
++	const Rectangle &analogCrop = sensorInfo.analogCrop;
++	const Size &sensorOutput = sensorInfo.outputSize;
++	const Size &iif = configInfo.iif;
++	const Size &bds = configInfo.bdsOutputSize;
++
++	if (pixelArray.isNull() || analogCrop.isNull() || sensorOutput.isNull() ||
++	    iif.isNull() || bds.isNull() || iif.width > sensorOutput.width ||
++	    iif.height > sensorOutput.height) {
++		LOG(IPU3Lsc, Error)
++			<< "Invalid geometry: pixel array " << pixelArray
++			<< ", analog crop " << analogCrop
++			<< ", sensor output " << sensorOutput
++			<< ", IF " << iif << ", BDS " << bds;
++		return -EINVAL;
++	}
++
++	/*
++	 * Select the finest hardware grid that covers the BDS output. The
++	 * width is limited by the number of cells in a LUT set, and the height
++	 * by the number of full grid lines that fit in all LUT sets.
++	 */
++	unsigned int widthLog2 = kMinBlockSizeLog2;
++	while (gridNodes(bds.width, widthLog2) > kMaxGridWidth &&
++	       widthLog2 < kMaxBlockSizeLog2)
++		widthLog2++;
++
++	unsigned int width = gridNodes(bds.width, widthLog2);
++	unsigned int linesPerSet = IPU3_UAPI_SHD_MAX_CELLS_PER_SET / width;
++	unsigned int maxHeight = std::min(kMaxGridHeight,
++					  IPU3_UAPI_SHD_MAX_CFG_SETS * linesPerSet);
++
++	unsigned int heightLog2 = kMinBlockSizeLog2;
++	while (gridNodes(bds.height, heightLog2) > maxHeight &&
++	       heightLog2 < kMaxBlockSizeLog2)
++		heightLog2++;
++
++	unsigned int height = gridNodes(bds.height, heightLog2);
++
++	if (width > kMaxGridWidth || height > maxHeight) {
++		LOG(IPU3Lsc, Error)
++			<< "BDS output " << bds << " too large for shading grid";
++		return -EINVAL;
++	}
++
++	/*
++	 * Map the grid nodes, expressed in BDS output pixel coordinates, to the
++	 * tuning grid. The ImgU input frame is the sensor output, cropped by
++	 * the input feeder (centred, aligned to an even pixel count, see the
++	 * kernel imgu_css_cfg_acc()) and scaled by the BDS. The sensor output
++	 * is the analogue crop, scaled by binning or skipping. Coordinates are
++	 * mapped through pixel centres.
++	 */
++	const double ifX = ((sensorOutput.width - iif.width) / 2) & ~1U;
++	const double ifY = ((sensorOutput.height - iif.height) / 2) & ~1U;
++	const double bdsScaleX = static_cast<double>(iif.width) / bds.width;
++	const double bdsScaleY = static_cast<double>(iif.height) / bds.height;
++	const double sensorScaleX = static_cast<double>(analogCrop.width) / sensorOutput.width;
++	const double sensorScaleY = static_cast<double>(analogCrop.height) / sensorOutput.height;
++	const double tuningScaleX = (tuningGrid_.width - 1.0) /
++				    std::max(pixelArray.width - 1.0, 1.0);
++	const double tuningScaleY = (tuningGrid_.height - 1.0) /
++				    std::max(pixelArray.height - 1.0, 1.0);
++
++	auto toTuningGrid = [](double pos, double ifOffset, double bdsScale,
++			       double cropOffset, double sensorScale,
++			       double tuningScale, unsigned int gridSize) {
++		double sensorPos = ifOffset + (pos + 0.5) * bdsScale - 0.5;
++		double arrayPos = cropOffset + (sensorPos + 0.5) * sensorScale - 0.5;
++		return std::clamp(arrayPos * tuningScale, 0.0, gridSize - 1.0);
++	};
++
++	std::vector<double> xPos(width);
++	for (unsigned int i = 0; i < width; i++)
++		xPos[i] = toTuningGrid(i << widthLog2, ifX, bdsScaleX,
++				       analogCrop.x, sensorScaleX, tuningScaleX,
++				       tuningGrid_.width);
++
++	std::vector<double> yPos(height);
++	for (unsigned int i = 0; i < height; i++)
++		yPos[i] = toTuningGrid(i << heightLog2, ifY, bdsScaleY,
++				       analogCrop.y, sensorScaleY, tuningScaleY,
++				       tuningGrid_.height);
++
++	std::map<unsigned int, Components> sets;
++	for (const auto &[ct, components] : tuningSets_) {
++		sets[ct] = {
++			.r = resample(components.r, xPos, yPos),
++			.gr = resample(components.gr, xPos, yPos),
++			.gb = resample(components.gb, xPos, yPos),
++			.b = resample(components.b, xPos, yPos),
++		};
++	}
++
++	sets_.setData(std::move(sets));
++
++	/*
++	 * Configure the grid. The kernel computes grid_height_per_slice and
++	 * init_set_vrt_offst_ul itself, set them for consistency. The grid
++	 * starts on the top-left pixel of the BDS output frame. Black level
++	 * correction is handled by the optical black block, disable it here.
++	 */
++	config_ = {};
++	config_.grid.width = width;
++	config_.grid.height = height;
++	config_.grid.block_width_log2 = widthLog2;
++	config_.grid.block_height_log2 = heightLog2;
++	config_.grid.grid_height_per_slice = linesPerSet;
++	config_.grid.x_start = 0;
++	config_.grid.y_start = 0;
++	config_.general.init_set_vrt_offst_ul = 0;
++	config_.general.shd_enable = 1;
++
++	lutValid_ = false;
++
++	context.activeState.lsc.enabled = true;
++
++	LOG(IPU3Lsc, Debug)
++		<< "Shading grid " << width << "x" << height << " with "
++		<< (1 << widthLog2) << "x" << (1 << heightLog2)
++		<< " blocks for BDS output " << bds << " (IF " << iif
++		<< ", sensor output " << sensorOutput << ", analog crop "
++		<< analogCrop << ")";
++
++	return 0;
++}
++
++/*
++ * Convert the gains to the hardware format and store them in the LUT. The
++ * LUT is organized in sets of grid_height_per_slice full grid lines.
++ */
++void Lsc::fillLut(const Components &gains)
++{
++	const unsigned int width = config_.grid.width;
++	const unsigned int height = config_.grid.height;
++	const unsigned int linesPerSet = config_.grid.grid_height_per_slice;
++
++	/* Select the smallest gain factor that can represent all gains. */
++	double maxGain = 1.0;
++	for (const std::vector<double> *table : { &gains.r, &gains.gr, &gains.gb, &gains.b })
++		maxGain = std::max(maxGain, *std::max_element(table->begin(), table->end()));
++
++	unsigned int gainFactor = 0;
++	while (gainFactor < kMaxGainFactor &&
++	       (maxGain - 1.0) * (1 << (kGainFractionalBits - gainFactor)) > kGainMaxValue)
++		gainFactor++;
++
++	config_.general.gain_factor = gainFactor;
++
++	const double scale = 1 << (kGainFractionalBits - gainFactor);
++	auto encode = [scale](double gain) -> uint16_t {
++		double value = std::round((gain - 1.0) * scale);
++		return std::clamp(value, 0.0, static_cast<double>(kGainMaxValue));
++	};
++
++	lut_ = {};
++
++	for (unsigned int y = 0; y < height; y++) {
++		unsigned int set = y / linesPerSet;
++		unsigned int offset = (y % linesPerSet) * width;
++
++		for (unsigned int x = 0; x < width; x++) {
++			unsigned int cell = offset + x;
++			unsigned int index = y * width + x;
++
++			lut_.sets[set].r_and_gr[cell].r = encode(gains.r[index]);
++			lut_.sets[set].r_and_gr[cell].gr = encode(gains.gr[index]);
++			lut_.sets[set].gb_and_b[cell].gb = encode(gains.gb[index]);
++			lut_.sets[set].gb_and_b[cell].b = encode(gains.b[index]);
++		}
++	}
++
++	if (maxGain > 1.0 + kGainMaxValue / scale)
++		LOG(IPU3Lsc, Warning)
++			<< "Maximum gain " << maxGain << " clamped to "
++			<< 1.0 + kGainMaxValue / scale;
++}
++
++/**
++ * \copydoc libcamera::ipa::Algorithm::queueRequest
++ */
++void Lsc::queueRequest(IPAContext &context,
++		       [[maybe_unused]] const uint32_t frame,
++		       IPAFrameContext &frameContext,
++		       const ControlList &controls)
++{
++	auto &lsc = context.activeState.lsc;
++
++	const auto &lscEnable = controls.get(controls::LensShadingCorrectionEnable);
++	if (lscEnable && *lscEnable != lsc.enabled) {
++		lsc.enabled = *lscEnable;
++
++		LOG(IPU3Lsc, Debug)
++			<< (lsc.enabled ? "Enabling" : "Disabling") << " Lsc";
++	}
++
++	frameContext.lsc.enabled = lsc.enabled;
++}
++
++/**
++ * \brief Fill in the parameter structure, and enable lens shading correction
++ * \param[in] context The shared IPA context
++ * \param[in] frame The frame context sequence number
++ * \param[in] frameContext The FrameContext for this frame
++ * \param[out] params The IPU3 parameters
++ *
++ * Interpolate the shading tables for the current colour temperature when it
++ * has changed, and copy the shading configuration and LUT to the parameters
++ * buffer. The configuration is written for every frame, as parameter buffers
++ * are recycled and the kernel only reads structures whose use flag is set.
++ */
++void Lsc::prepare(IPAContext &context, [[maybe_unused]] const uint32_t frame,
++		  IPAFrameContext &frameContext, ipu3_uapi_params *params)
++{
++	/* Use a default colour temperature until AWB provides an estimate. */
++	double temperatureK = context.activeState.awb.temperatureK;
++	unsigned int ct = temperatureK > 0 ? std::lround(temperatureK)
++					   : kDefaultColourTemperature;
++	unsigned int quantizedCt = quantize(ct, kColourTemperatureQuantization);
++
++	/*
++	 * Update the LUT when the colour temperature changes, with a threshold
++	 * to avoid oscillations around a quantization step.
++	 */
++	if (!lutValid_ ||
++	    (quantizedCt != lastAppliedQuantizedCt_ &&
++	     utils::abs_diff(ct, lastAppliedCt_) >= kColourTemperatureQuantization / 2)) {
++		fillLut(sets_.getInterpolated(quantizedCt));
++
++		lastAppliedCt_ = ct;
++		lastAppliedQuantizedCt_ = quantizedCt;
++		lutValid_ = true;
++
++		LOG(IPU3Lsc, Debug)
++			<< "ct is " << ct << ", quantized to " << quantizedCt
++			<< ", gain factor " << config_.general.gain_factor;
++	}
++
++	/*
++	 * When disabled, also program unity gains (a zero LUT, as used by the
++	 * kernel defaults) in case the enable bit isn't honoured.
++	 */
++	params->acc_param.shd.shd = config_;
++	params->acc_param.shd.shd.general.shd_enable = frameContext.lsc.enabled;
++	if (frameContext.lsc.enabled)
++		params->acc_param.shd.shd_lut = lut_;
++	else
++		params->acc_param.shd.shd_lut = {};
++
++	params->use.acc_shd = 1;
++}
++
++/**
++ * \copydoc libcamera::ipa::Algorithm::process
++ */
++void Lsc::process([[maybe_unused]] IPAContext &context,
++		  [[maybe_unused]] const uint32_t frame,
++		  IPAFrameContext &frameContext,
++		  [[maybe_unused]] const ipu3_uapi_stats_3a *stats,
++		  ControlList &metadata)
++{
++	metadata.set(controls::LensShadingCorrectionEnable, frameContext.lsc.enabled);
++}
++
++REGISTER_IPA_ALGORITHM(Lsc, "Lsc")
++
++} /* namespace ipa::ipu3::algorithms */
++
++} /* namespace libcamera */
+diff --git a/src/ipa/ipu3/algorithms/lsc.h b/src/ipa/ipu3/algorithms/lsc.h
+new file mode 100644
+index 000000000..a39f0badb
+--- /dev/null
++++ b/src/ipa/ipu3/algorithms/lsc.h
+@@ -0,0 +1,74 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/*
++ * Copyright (C) 2026, the libcamera contributors
++ *
++ * IPU3 Lens Shading Correction
++ */
++
++#pragma once
++
++#include <map>
++#include <vector>
++
++#include <linux/intel-ipu3.h>
++
++#include <libcamera/geometry.h>
++
++#include "libipa/interpolator.h"
++
++#include "algorithm.h"
++
++namespace libcamera {
++
++namespace ipa::ipu3::algorithms {
++
++class Lsc : public Algorithm
++{
++public:
++	struct Components {
++		std::vector<double> r;
++		std::vector<double> gr;
++		std::vector<double> gb;
++		std::vector<double> b;
++	};
++
++	Lsc();
++
++	int init(IPAContext &context, const ValueNode &tuningData) override;
++	int configure(IPAContext &context, const IPAConfigInfo &configInfo) override;
++	void queueRequest(IPAContext &context, const uint32_t frame,
++			  IPAFrameContext &frameContext,
++			  const ControlList &controls) override;
++	void prepare(IPAContext &context, const uint32_t frame,
++		     IPAFrameContext &frameContext,
++		     ipu3_uapi_params *params) override;
++	void process(IPAContext &context, const uint32_t frame,
++		     IPAFrameContext &frameContext,
++		     const ipu3_uapi_stats_3a *stats,
++		     ControlList &metadata) override;
++
++private:
++	int parseSet(const ValueNode &set, Components &components) const;
++	std::vector<double> resample(const std::vector<double> &table,
++				     const std::vector<double> &xPos,
++				     const std::vector<double> &yPos) const;
++	void fillLut(const Components &gains);
++
++	/* Tuning data, sampled on the sensor pixel array. */
++	Size tuningGrid_;
++	std::map<unsigned int, Components> tuningSets_;
++
++	/* Tuning data resampled on the ImgU shading grid. */
++	ipa::Interpolator<Components> sets_;
++
++	ipu3_uapi_shd_config_static config_;
++	ipu3_uapi_shd_lut lut_;
++
++	unsigned int lastAppliedCt_;
++	unsigned int lastAppliedQuantizedCt_;
++	bool lutValid_;
++};
++
++} /* namespace ipa::ipu3::algorithms */
++
++} /* namespace libcamera */
+diff --git a/src/ipa/ipu3/algorithms/meson.build b/src/ipa/ipu3/algorithms/meson.build
+index b70a551ca..58123daea 100644
+--- a/src/ipa/ipu3/algorithms/meson.build
++++ b/src/ipa/ipu3/algorithms/meson.build
+@@ -5,5 +5,6 @@ ipu3_ipa_algorithms = files([
+     'agc.cpp',
+     'awb.cpp',
+     'blc.cpp',
++    'lsc.cpp',
+     'tone_mapping.cpp',
+ ])
+diff --git a/src/ipa/ipu3/ipa_context.cpp b/src/ipa/ipu3/ipa_context.cpp
+index 3b22f7917..dc5b34497 100644
+--- a/src/ipa/ipu3/ipa_context.cpp
++++ b/src/ipa/ipu3/ipa_context.cpp
+@@ -173,6 +173,14 @@ namespace libcamera::ipa::ipu3 {
+  * <linux/intel-ipu3.h> struct ipu3_uapi_gamma_corr_lut for further details.
+  */
+ 
++/**
++ * \var IPAActiveState::lsc
++ * \brief Context for the Lens Shading Correction algorithm
++ *
++ * \var IPAActiveState::lsc.enabled
++ * \brief Lens shading correction enable state, as requested by the application
++ */
++
+ /**
+  * \struct IPAFrameContext
+  * \brief IPU3-specific FrameContext
+@@ -185,6 +193,12 @@ namespace libcamera::ipa::ipu3 {
+  *
+  * \var IPAFrameContext::sensor.gain
+  * \brief Analogue gain multiplier
++ *
++ * \var IPAFrameContext::lsc
++ * \brief Lens shading correction parameters for the frame
++ *
++ * \var IPAFrameContext::lsc.enabled
++ * \brief Whether lens shading correction is enabled for the frame
+  */
+ 
+ } /* namespace libcamera::ipa::ipu3 */
+diff --git a/src/ipa/ipu3/ipa_context.h b/src/ipa/ipu3/ipa_context.h
+index 97fcf06cd..ae2a09895 100644
+--- a/src/ipa/ipu3/ipa_context.h
++++ b/src/ipa/ipu3/ipa_context.h
+@@ -74,6 +74,10 @@ struct IPAActiveState {
+ 		double gamma;
+ 		struct ipu3_uapi_gamma_corr_lut gammaCorrection;
+ 	} toneMapping;
++
++	struct {
++		bool enabled;
++	} lsc;
+ };
+ 
+ struct IPAFrameContext : public FrameContext {
+@@ -81,6 +85,10 @@ struct IPAFrameContext : public FrameContext {
+ 		uint32_t exposure;
+ 		double gain;
+ 	} sensor;
++
++	struct {
++		bool enabled;
++	} lsc;
+ };
+ 
+ struct IPAContext {
+-- 
+2.56.0
+
