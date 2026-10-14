@@ -70,7 +70,7 @@ All commands run from the repo root.
 
 2. **Stop PipeWire.** `cam` needs exclusive access to the camera.
    ```sh
-   systemctl --user stop pipewire.socket pipewire wireplumber
+   systemctl --user stop pipewire.socket pipewire-pulse.socket pipewire pipewire-pulse wireplumber
    ```
 
 3. **Capture the flat field.** The script keeps 8 raw frames after dropping
@@ -94,7 +94,7 @@ All commands run from the repo root.
 
 6. **Restart PipeWire.**
    ```sh
-   systemctl --user start pipewire.socket pipewire wireplumber
+   systemctl --user start pipewire.socket pipewire-pulse.socket pipewire pipewire-pulse wireplumber
    ```
 
 7. **Calibrate.**
@@ -135,7 +135,7 @@ All commands run from the repo root.
    Then install it system-wide. `/etc` is searched before `/usr/share`:
    ```sh
    sudo install -Dm644 lsc-out/ov8858.yaml /etc/libcamera/ipa/ipu3/ov8858.yaml
-   systemctl --user restart pipewire.socket pipewire wireplumber
+   systemctl --user restart pipewire.socket pipewire-pulse.socket pipewire pipewire-pulse wireplumber
    ```
    To undo it, run `sudo rm /etc/libcamera/ipa/ipu3/ov8858.yaml`. libcamera
    then falls back to `uncalibrated.yaml`. The log line

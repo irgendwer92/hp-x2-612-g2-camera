@@ -47,7 +47,7 @@ unload() {
 	for m in "$@"; do
 		if is_loaded "$m"; then
 			echo "rmmod $m"
-			rmmod "$m" || die "cannot unload $m (in use? stop camera users first, e.g. 'systemctl --user stop wireplumber pipewire' as your user)"
+			rmmod "$m" || die "cannot unload $m (in use? stop camera users first, e.g. 'systemctl --user stop pipewire.socket pipewire-pulse.socket pipewire pipewire-pulse wireplumber' as your user)"
 		fi
 	done
 }

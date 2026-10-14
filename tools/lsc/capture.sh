@@ -5,9 +5,9 @@
 # the HP Pro x2 612 G2 through libcamera's IPU3 pipeline, for calibrate.py.
 #
 # BEFORE RUNNING: stop PipeWire, cam needs exclusive access to the camera:
-#     systemctl --user stop pipewire.socket pipewire wireplumber
+#     systemctl --user stop pipewire.socket pipewire-pulse.socket pipewire pipewire-pulse wireplumber
 # and afterwards restart it:
-#     systemctl --user start pipewire.socket pipewire wireplumber
+#     systemctl --user start pipewire.socket pipewire-pulse.socket pipewire pipewire-pulse wireplumber
 #
 # Flat-field target: an evenly lit, matte white sheet (or a diffuser / opal
 # glass held directly in front of the lens) filling the WHOLE frame, lit by
@@ -67,7 +67,7 @@ done
 
 # PipeWire / WirePlumber hold the camera; refuse to run while they are active.
 busy=""
-for u in pipewire.socket pipewire wireplumber; do
+for u in pipewire.socket pipewire-pulse.socket pipewire pipewire-pulse wireplumber; do
 	if systemctl --user is-active --quiet "$u" 2>/dev/null; then
 		busy="$busy $u"
 	fi
@@ -75,7 +75,7 @@ done
 if [ -n "$busy" ]; then
 	echo "error: still running:$busy" >&2
 	echo "Stop them first (cam needs exclusive camera access):" >&2
-	echo "    systemctl --user stop pipewire.socket pipewire wireplumber" >&2
+	echo "    systemctl --user stop pipewire.socket pipewire-pulse.socket pipewire pipewire-pulse wireplumber" >&2
 	exit 1
 fi
 
