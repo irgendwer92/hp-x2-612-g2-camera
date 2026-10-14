@@ -108,3 +108,19 @@ Consumer device: `i2c-INT3477:00`
   Unclamped red corner gain ≈ 7×; with the default 4× cap 129/825 red points are clamped.
 - libcamera 0.7.2 IPU3 raw stream reports sequence 0 for every buffer (cam's file sink overwrites
   raw frames); capture.sh works around it with one cam run per frame.
+
+### 2026-10-14, LSC on hardware (libcamera/patches 0001–0004, tables from tools/lsc, max gain 8)
+Measured on qcam PNG output (gamma-encoded), paper against the lens:
+
+| | no LSC | LSC, BLC 64 | LSC, BLC 16 |
+|---|---|---|---|
+| corner luminance / centre | 0.37–0.40 | 0.86–0.94 | 1.00–1.17 |
+| corner R/G | 0.62–0.66 | 0.87–0.92 | 1.02–1.03 |
+| corner B/G | 0.97–1.01 | 0.99 | 1.00–1.01 |
+
+- With the black level at 16 the colour shading is gone. The remaining luminance spread is asymmetric
+  (1.00 to 1.17 between corners), i.e. most likely uneven illumination of the paper in that shot,
+  not a systematic over-correction; worth re-checking with a cleaner flat field.
+- A real scene (balcony) shows correct blacks (BLC 16 is right in ImgU units), natural colours,
+  no corner cast; corners somewhat noisier (gains up to 7.15×).
+- Not seen: grid offset, a striping seam, or wrong gain scaling (the open risks in libcamera/README.md).
