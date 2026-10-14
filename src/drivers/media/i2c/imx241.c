@@ -23,6 +23,7 @@
 #include <linux/delay.h>
 #include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
+#include <linux/ktime.h>
 #include <linux/minmax.h>
 #include <linux/mod_devicetable.h>
 #include <linux/module.h>
@@ -295,6 +296,7 @@ struct imx241 {
 	struct gpio_desc *avdd_gpio;
 	struct gpio_desc *reset_gpio;
 	struct gpio_desc *powerdown_gpio;
+	ktime_t power_off_time;
 
 	struct v4l2_ctrl_handler ctrl_handler;
 	struct v4l2_ctrl *pixel_rate;
@@ -811,12 +813,27 @@ static const struct v4l2_subdev_internal_ops imx241_internal_ops = {
  * then release reset and powerdown and wait 20 ms before the first I2C
  * access.
  */
+/*
+ * Minimum time the sensor stays unpowered before it is powered up again, so
+ * that its rails discharge and it sees a clean power-on reset. The TPS68470
+ * LDOs and the external analogue regulator are not actively discharged.
+ */
+#define IMX241_MIN_POWER_OFF_MS		100
+
 static int imx241_power_on(struct device *dev)
 {
 	struct v4l2_subdev *sd = dev_get_drvdata(dev);
 	struct imx241 *imx241 = to_imx241(sd);
 	unsigned int i;
+	s64 off_ms;
 	int ret;
+
+	if (imx241->power_off_time) {
+		off_ms = ktime_ms_delta(ktime_get(), imx241->power_off_time);
+		dev_dbg(dev, "powering up after %lld ms off\n", off_ms);
+		if (off_ms < IMX241_MIN_POWER_OFF_MS)
+			msleep(IMX241_MIN_POWER_OFF_MS - off_ms);
+	}
 
 	if (imx241->avdd) {
 		ret = regulator_enable(imx241->avdd);
@@ -857,6 +874,8 @@ err_regulators:
 	if (imx241->avdd)
 		regulator_disable(imx241->avdd);
 
+	imx241->power_off_time = ktime_get();
+
 	return ret;
 }
 
@@ -876,6 +895,9 @@ static int imx241_power_off(struct device *dev)
 	gpiod_set_value_cansleep(imx241->avdd_gpio, 0);
 	if (imx241->avdd)
 		regulator_disable(imx241->avdd);
+
+	imx241->power_off_time = ktime_get();
+	dev_dbg(dev, "powered down\n");
 
 	return 0;
 }

@@ -48,7 +48,7 @@ Signed-off-by: TODO <TODO>
 ---
 --- /dev/null
 +++ b/drivers/media/i2c/imx241.c
-@@ -0,0 +1,1203 @@
+@@ -0,0 +1,1225 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * V4L2 driver for the Sony IMX241 5 MP raw Bayer sensor (SMIA 1.0).
@@ -74,6 +74,7 @@ Signed-off-by: TODO <TODO>
 +#include <linux/delay.h>
 +#include <linux/gpio/consumer.h>
 +#include <linux/i2c.h>
++#include <linux/ktime.h>
 +#include <linux/minmax.h>
 +#include <linux/mod_devicetable.h>
 +#include <linux/module.h>
@@ -346,6 +347,7 @@ Signed-off-by: TODO <TODO>
 +	struct gpio_desc *avdd_gpio;
 +	struct gpio_desc *reset_gpio;
 +	struct gpio_desc *powerdown_gpio;
++	ktime_t power_off_time;
 +
 +	struct v4l2_ctrl_handler ctrl_handler;
 +	struct v4l2_ctrl *pixel_rate;
@@ -862,12 +864,27 @@ Signed-off-by: TODO <TODO>
 + * then release reset and powerdown and wait 20 ms before the first I2C
 + * access.
 + */
++/*
++ * Minimum time the sensor stays unpowered before it is powered up again, so
++ * that its rails discharge and it sees a clean power-on reset. The TPS68470
++ * LDOs and the external analogue regulator are not actively discharged.
++ */
++#define IMX241_MIN_POWER_OFF_MS		100
++
 +static int imx241_power_on(struct device *dev)
 +{
 +	struct v4l2_subdev *sd = dev_get_drvdata(dev);
 +	struct imx241 *imx241 = to_imx241(sd);
 +	unsigned int i;
++	s64 off_ms;
 +	int ret;
++
++	if (imx241->power_off_time) {
++		off_ms = ktime_ms_delta(ktime_get(), imx241->power_off_time);
++		dev_dbg(dev, "powering up after %lld ms off\n", off_ms);
++		if (off_ms < IMX241_MIN_POWER_OFF_MS)
++			msleep(IMX241_MIN_POWER_OFF_MS - off_ms);
++	}
 +
 +	if (imx241->avdd) {
 +		ret = regulator_enable(imx241->avdd);
@@ -908,6 +925,8 @@ Signed-off-by: TODO <TODO>
 +	if (imx241->avdd)
 +		regulator_disable(imx241->avdd);
 +
++	imx241->power_off_time = ktime_get();
++
 +	return ret;
 +}
 +
@@ -927,6 +946,9 @@ Signed-off-by: TODO <TODO>
 +	gpiod_set_value_cansleep(imx241->avdd_gpio, 0);
 +	if (imx241->avdd)
 +		regulator_disable(imx241->avdd);
++
++	imx241->power_off_time = ktime_get();
++	dev_dbg(dev, "powered down\n");
 +
 +	return 0;
 +}

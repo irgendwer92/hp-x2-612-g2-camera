@@ -198,6 +198,40 @@ capture() {
 	fi
 }
 
+# Swap in a rebuilt imx241.ko inside a running test boot. The camera graph
+# (ipu-bridge software nodes, including INT347F) persists for the whole boot,
+# so only the CIO2 driver and the sensor drivers need reloading; the PMIC
+# driver is left alone.
+do_reload() {
+	[ "$(id -u)" = 0 ] || die "run as root: sudo $0 reload"
+	grep -qw "$flag" /proc/cmdline ||
+		die "only in a test boot (kernel command line with '$flag')"
+	[ -f "$front/imx241.ko" ] || die "$front/imx241.ko not found; run '$0 build' as your user first"
+	if active=$(pipewire_active); then
+		echo "PipeWire is active:$active; stop it first" >&2
+		exit 1
+	fi
+	install -m644 "$front/imx241.ko" "$stage/imx241.ko"
+
+	say "reloading ipu3_cio2 and the sensor drivers"
+	for m in ipu3_cio2 ov8858 dw9714 imx241; do
+		if [ -d "/sys/module/$m" ]; then
+			echo "  rmmod $m"
+			rmmod "$m" || die "cannot unload $m"
+		fi
+	done
+	modprobe -a $(modinfo -F depends "$stage/imx241.ko" | tr , ' ')
+	insmod "$stage/imx241.ko" dyndbg=+p
+	modprobe ipu3_cio2
+	modprobe ov8858
+	modprobe dw9714 2>/dev/null || true
+	udevadm settle -t 10 || true
+	sleep 1
+	dmesg | tail -n 40 | grep -E 'imx241|ov8858|cio2' | sed 's/^/  /'
+	echo
+	echo "now run: sudo $0 run"
+}
+
 do_run() {
 	[ "$(id -u)" = 0 ] || die "run as root: sudo $0 run"
 	grep -qw "$flag" /proc/cmdline ||
@@ -325,6 +359,7 @@ do_run() {
 case "${1:-build}" in
 build) do_build ;;
 arm) do_arm ;;
+reload) do_reload ;;
 run) do_run ;;
-*) echo "usage: $0 [build|arm|run]" >&2; exit 1 ;;
+*) echo "usage: $0 [build|arm|reload|run]" >&2; exit 1 ;;
 esac
