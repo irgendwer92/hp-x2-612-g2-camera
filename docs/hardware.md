@@ -179,3 +179,6 @@ MCLK with a 2592×1944 readout (5 MP; the SMIA limit registers' 1936×1096 array
   sensor helper for imx241") and still registers the rear camera. The patched local build
   (libcamera/patches 0005/0006) registers both: "Internal back camera" and "Internal front camera".
 - Not yet tested: full 2592x1944 mode, libcamera streaming from the front camera.
+- Full 2592x1944 mode at 24 MHz / 498 MHz link also streams cleanly (4 frames of 6469632 bytes:
+  3328 bytes per line × 1944). qcam from the patched local libcamera shows a live, processed
+  front-camera image ("okayish sharp"); mirror orientation still to be confirmed with a text test.
