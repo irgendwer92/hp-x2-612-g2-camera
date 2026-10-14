@@ -478,10 +478,14 @@ static struct regulator_consumer_supply int347f_aux2_consumer_supplies[] = {
 	REGULATOR_SUPPLY("vio", "i2c-INT347F:00"),
 };
 
+/*
+ * 1.2 V is not on the AUX regulator's 17.8 mV grid; like the Windows driver,
+ * round up to the next step.
+ */
 static const struct regulator_init_data hp_x2_612_g2_tps68470_aux1_reg_init_data = {
 	.constraints = {
-		.min_uV = 1200000,
-		.max_uV = 1200000,
+		.min_uV = 1213200,
+		.max_uV = 1213200,
 		.apply_uV = true,
 		.valid_ops_mask = REGULATOR_CHANGE_STATUS,
 	},

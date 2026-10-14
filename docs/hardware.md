@@ -124,3 +124,10 @@ Measured on qcam PNG output (gamma-encoded), paper against the lens:
 - A real scene (balcony) shows correct blacks (BLC 16 is right in ImgU units), natural colours,
   no corner cast; corners somewhat noisier (gains up to 7.15×).
 - Not seen: grid offset, a striping seam, or wrong gain scaling (the open risks in libcamera/README.md).
+
+### 2026-10-14, front camera probe, first attempt
+- Patch 0004 asked AUX1 for exactly 1.2 V, which is not on the TPS68470 AUX grid (875 mV + n × 17.8 mV).
+  `tps68470-regulator` then failed to probe entirely (`error -EINVAL: registering AUX1 regulator`),
+  leaving even the rear camera unpowered for that boot. Fixed to 1.2132 V (n = 19), which is what the
+  Windows driver programs (it rounds up). All board-data voltages are now checked against the grids:
+  CORE 900 mV + n × 25 mV; ANA/VCM/VIO/VSIO/AUX1/AUX2 875 mV + n × 17.8 mV.
