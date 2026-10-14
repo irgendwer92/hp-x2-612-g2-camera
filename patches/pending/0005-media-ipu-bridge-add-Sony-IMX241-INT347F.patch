@@ -1,0 +1,37 @@
+From: TODO <TODO>
+Subject: [PATCH] media: ipu-bridge: Add Sony IMX241 (INT347F) to supported sensors
+
+Not for upstream yet, and NOT applied by scripts/prepare.sh (it lives in
+patches/pending/): there is no Linux driver for the IMX241 yet, and
+ipu-bridge must only list sensors that are actually supported. Worse,
+ipu3-cio2 creates its media links and subdev nodes only once every
+sensor in the fwnode graph has bound (cio2_notifier_complete()), so
+listing INT347F without a driver that binds would take the working rear
+OV8858 camera down with it. Move this patch to patches/ together with
+the sensor driver.
+
+The Sony IMX241 is found with ACPI HID INT347F on IPU3 based devices
+such as the HP Pro x2 612 G2, where it is the front camera on CSI-2
+port 1 with 2 data lanes.
+
+Add it to the list of sensors supported by ipu-bridge so that the
+fwnode graph is built for it. The link frequency of 499.2 MHz is the
+operating point of the Windows driver (19.2 MHz MCLK, pre-PLL divider
+2, multiplier 104, PLL 998.4 MHz, RAW10 on 2 lanes). It is provisional:
+with a 24 MHz MCLK (the TPS68470 clock is shared with the OV8858, which
+needs 24 MHz) the nearest operating point is 498 MHz, and the driver
+and this entry must agree on the value.
+
+Signed-off-by: TODO <TODO>
+---
+--- a/drivers/media/pci/intel/ipu-bridge.c
++++ b/drivers/media/pci/intel/ipu-bridge.c
+@@ -71,6 +71,8 @@
+ 	IPU_SENSOR_CONFIG("INT347A", 1, 360000000),
+ 	/* Omnivision OV7251 */
+ 	IPU_SENSOR_CONFIG("INT347E", 1, 319200000),
++	/* Sony IMX241 */
++	IPU_SENSOR_CONFIG("INT347F", 1, 499200000),
+ 	/* Hynix Hi-556 */
+ 	IPU_SENSOR_CONFIG("INT3537", 1, 437000000),
+ 	/* Lontium lt6911uxe */
