@@ -1,0 +1,186 @@
+From 754bc48f7dc7c54fd81ba6902c2c8dcd584b171e Mon Sep 17 00:00:00 2001
+From: irgend wer <irgend@wer.de>
+Date: Wed, 14 Oct 2026 17:15:14 +0200
+Subject: [PATCH 4/4] ipa: ipu3: blc: Use the sensor black level
+
+The IPU3 black level correction subtracts a hard-coded 64 on every
+sensor. On sensors with a lower pedestal this over-subtracts, crushing
+shadows, and it biases lens shading correction where the signal is
+low: on an OV8858 (black level 16) the corners stay visibly dark and
+cyan after correction.
+
+Take the black level from the camera sensor helper, keeping 64 as the
+default when the helper doesn't know it, and allow per-channel R, Gr,
+Gb and B overrides in the tuning file.
+
+Signed-off-by: TODO <TODO>
+---
+ src/ipa/ipu3/algorithms/blc.cpp | 64 +++++++++++++++++++++++++++------
+ src/ipa/ipu3/algorithms/blc.h   |  8 +++++
+ src/ipa/ipu3/ipa_context.h      |  4 +++
+ src/ipa/ipu3/ipu3.cpp           |  8 +++++
+ 4 files changed, 74 insertions(+), 10 deletions(-)
+
+diff --git a/src/ipa/ipu3/algorithms/blc.cpp b/src/ipa/ipu3/algorithms/blc.cpp
+index 35748fb2c..b9110cf7c 100644
+--- a/src/ipa/ipu3/algorithms/blc.cpp
++++ b/src/ipa/ipu3/algorithms/blc.cpp
+@@ -7,6 +7,8 @@
+ 
+ #include "blc.h"
+ 
++#include <libcamera/base/log.h>
++
+ /**
+  * \file blc.h
+  * \brief IPU3 Black Level Correction control
+@@ -30,10 +32,48 @@ namespace ipa::ipu3::algorithms {
+  * isn't currently supported.
+  */
+ 
++LOG_DEFINE_CATEGORY(IPU3Blc)
++
+ BlackLevelCorrection::BlackLevelCorrection()
+ {
+ }
+ 
++/**
++ * \brief Load the black level from the tuning data
++ * \param[in] context The shared IPA context
++ * \param[in] tuningData The tuning data for the algorithm
++ *
++ * The black levels can be given per channel with the R, Gr, Gb and B keys, in
++ * 10-bit units. When they are absent the level reported by the camera sensor
++ * helper is used, or 64 if the helper doesn't know the sensor's black level.
++ *
++ * \return 0 on success, -EINVAL if only some of the levels are given
++ */
++int BlackLevelCorrection::init([[maybe_unused]] IPAContext &context,
++			       const ValueNode &tuningData)
++{
++	std::optional<uint16_t> r = tuningData["R"].get<uint16_t>();
++	std::optional<uint16_t> gr = tuningData["Gr"].get<uint16_t>();
++	std::optional<uint16_t> gb = tuningData["Gb"].get<uint16_t>();
++	std::optional<uint16_t> b = tuningData["B"].get<uint16_t>();
++
++	if (!r && !gr && !gb && !b)
++		return 0;
++
++	if (!r || !gr || !gb || !b) {
++		LOG(IPU3Blc, Error)
++			<< "Black levels must be given for all of R, Gr, Gb and B";
++		return -EINVAL;
++	}
++
++	levels_ = { *r, *gr, *gb, *b };
++	LOG(IPU3Blc, Debug)
++		<< "Black levels from tuning file: " << *r << " " << *gr
++		<< " " << *gb << " " << *b;
++
++	return 0;
++}
++
+ /**
+  * \brief Fill in the parameter structure, and enable black level correction
+  * \param[in] context The shared IPA context
+@@ -44,20 +84,24 @@ BlackLevelCorrection::BlackLevelCorrection()
+  * Populate the IPU3 parameter structure with the correction values for each
+  * channel and enable the corresponding ImgU block processing.
+  */
+-void BlackLevelCorrection::prepare([[maybe_unused]] IPAContext &context,
++void BlackLevelCorrection::prepare(IPAContext &context,
+ 				   [[maybe_unused]] const uint32_t frame,
+ 				   [[maybe_unused]] IPAFrameContext &frameContext,
+ 				   ipu3_uapi_params *params)
+ {
+-	/*
+-	 * The Optical Black Level correction values
+-	 * \todo The correction values should come from sensor specific
+-	 * tuning processes. This is a first rough approximation.
+-	 */
+-	params->obgrid_param.gr = 64;
+-	params->obgrid_param.r = 64;
+-	params->obgrid_param.b = 64;
+-	params->obgrid_param.gb = 64;
++	if (levels_) {
++		params->obgrid_param.r = (*levels_)[0];
++		params->obgrid_param.gr = (*levels_)[1];
++		params->obgrid_param.gb = (*levels_)[2];
++		params->obgrid_param.b = (*levels_)[3];
++	} else {
++		uint16_t level = context.configuration.blc.sensorLevel;
++
++		params->obgrid_param.r = level;
++		params->obgrid_param.gr = level;
++		params->obgrid_param.gb = level;
++		params->obgrid_param.b = level;
++	}
+ 
+ 	/* Enable the custom black level correction processing */
+ 	params->use.obgrid = 1;
+diff --git a/src/ipa/ipu3/algorithms/blc.h b/src/ipa/ipu3/algorithms/blc.h
+index 627480454..200f08914 100644
+--- a/src/ipa/ipu3/algorithms/blc.h
++++ b/src/ipa/ipu3/algorithms/blc.h
+@@ -7,6 +7,9 @@
+ 
+ #pragma once
+ 
++#include <array>
++#include <optional>
++
+ #include "algorithm.h"
+ 
+ namespace libcamera {
+@@ -18,9 +21,14 @@ class BlackLevelCorrection : public Algorithm
+ public:
+ 	BlackLevelCorrection();
+ 
++	int init(IPAContext &context, const ValueNode &tuningData) override;
+ 	void prepare(IPAContext &context, const uint32_t frame,
+ 		     IPAFrameContext &frameContext,
+ 		     ipu3_uapi_params *params) override;
++
++private:
++	/* Tuning file override, in R, Gr, Gb, B order (10-bit) */
++	std::optional<std::array<uint16_t, 4>> levels_;
+ };
+ 
+ } /* namespace ipa::ipu3::algorithms */
+diff --git a/src/ipa/ipu3/ipa_context.h b/src/ipa/ipu3/ipa_context.h
+index ae2a09895..9800cf4db 100644
+--- a/src/ipa/ipu3/ipa_context.h
++++ b/src/ipa/ipu3/ipa_context.h
+@@ -44,6 +44,10 @@ struct IPASessionConfiguration {
+ 		utils::Duration lineDuration;
+ 		Size size;
+ 	} sensor;
++
++	struct {
++		uint16_t sensorLevel;
++	} blc;
+ };
+ 
+ struct IPAActiveState {
+diff --git a/src/ipa/ipu3/ipu3.cpp b/src/ipa/ipu3/ipu3.cpp
+index 4bdc4b767..ed29b3ce5 100644
+--- a/src/ipa/ipu3/ipu3.cpp
++++ b/src/ipa/ipu3/ipu3.cpp
+@@ -225,6 +225,14 @@ void IPAIPU3::updateSessionConfiguration(const ControlInfoMap &sensorControls)
+ 	context_.configuration.agc.maxExposureTime = maxExposure * context_.configuration.sensor.lineDuration;
+ 	context_.configuration.agc.minAnalogueGain = camHelper_->gain(minGain);
+ 	context_.configuration.agc.maxAnalogueGain = camHelper_->gain(maxGain);
++
++	/*
++	 * The sensor helper expresses the black level on a 16-bit scale, the
++	 * ImgU black level correction works on the 10-bit CIO2 output. Keep
++	 * the historical default of 64 for sensors without a known level.
++	 */
++	context_.configuration.blc.sensorLevel =
++		camHelper_->blackLevel().value_or(4096) >> 6;
+ }
+ 
+ /**
+-- 
+2.56.0
+

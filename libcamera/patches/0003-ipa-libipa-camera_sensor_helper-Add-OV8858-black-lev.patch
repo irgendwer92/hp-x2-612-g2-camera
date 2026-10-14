@@ -1,0 +1,39 @@
+From 8392658ab1e7790cb7d5288e706a3104ed4ad293 Mon Sep 17 00:00:00 2001
+From: irgend wer <irgend@wer.de>
+Date: Wed, 14 Oct 2026 17:15:14 +0200
+Subject: [PATCH 3/4] ipa: libipa: camera_sensor_helper: Add OV8858 black level
+
+The ov8858 kernel driver programs the sensor's BLC target register
+(0x4005) to 0x10, so the black level is 16 at 10 bits. A measurement
+with the lens covered on an HP Pro x2 612 G2 gives 14.75 to 16 per
+channel.
+
+Report it from the sensor helper so that IPAs which don't get the level
+from a tuning file use the right value.
+
+Signed-off-by: TODO <TODO>
+---
+ src/ipa/libipa/camera_sensor_helper.cpp | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/src/ipa/libipa/camera_sensor_helper.cpp b/src/ipa/libipa/camera_sensor_helper.cpp
+index 9457d62b3..2e16a28e6 100644
+--- a/src/ipa/libipa/camera_sensor_helper.cpp
++++ b/src/ipa/libipa/camera_sensor_helper.cpp
+@@ -803,6 +803,13 @@ public:
+ 		 * See: https://patchwork.linuxtv.org/project/linux-media/patch/20221106171129.166892-2-nicholas@rothemail.net/#142267
+ 		 */
+ 		gain_ = AnalogueGainLinear{ 1, 0, 0, 128 };
++
++		/*
++		 * The kernel driver sets the BLC target (register 0x4005) to
++		 * 0x10, i.e. 16 at 10 bits. Measured with the lens covered on
++		 * an HP Pro x2 612 G2: 14.75 to 16.
++		 */
++		blackLevel_ = 1024;
+ 	}
+ };
+ REGISTER_CAMERA_SENSOR_HELPER("ov8858", CameraSensorHelperOv8858)
+-- 
+2.56.0
+
