@@ -20,6 +20,7 @@
 #include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/regulator/consumer.h>
+#include <linux/string.h>
 
 static bool use_vcm;
 module_param(use_vcm, bool, 0444);
@@ -28,6 +29,10 @@ MODULE_PARM_DESC(use_vcm, "also enable the VCM supply (GPIO3)");
 static unsigned int clk_hz = 19200000;
 module_param(clk_hz, uint, 0444);
 MODULE_PARM_DESC(clk_hz, "sensor clock rate (default 19.2 MHz, per SSDB)");
+
+static bool dump_limits;
+module_param(dump_limits, bool, 0444);
+MODULE_PARM_DESC(dump_limits, "also dump SMIA/CCS registers 0x0040-0x00ff and 0x1000-0x13ff");
 
 static unsigned int hold_s;
 module_param(hold_s, uint, 0444);
@@ -66,6 +71,27 @@ static void dump(struct i2c_client *client, u16 addr)
 		dev_info(dev, "0x%02x: regs 0x0010: %*ph\n", addr, 16, buf);
 	if (!read_regs(client->adapter, addr, 0x0100, buf, 4))
 		dev_info(dev, "0x%02x: regs 0x0100: %*ph\n", addr, 4, buf);
+
+	if (dump_limits) {
+		static const struct { u16 start, end; } ranges[] = {
+			{ 0x0040, 0x0100 },	/* data format descriptors */
+			{ 0x1000, 0x1400 },	/* limits */
+		};
+		unsigned int r;
+		u16 reg;
+
+		for (r = 0; r < ARRAY_SIZE(ranges); r++)
+			for (reg = ranges[r].start; reg < ranges[r].end; reg += 16) {
+				if (read_regs(client->adapter, addr, reg, buf, 16)) {
+					dev_info(dev, "0x%02x: regs 0x%04x: read failed\n",
+						 addr, reg);
+					break;
+				}
+				if (memchr_inv(buf, 0, 16))
+					dev_info(dev, "0x%02x: regs 0x%04x: %*ph\n",
+						 addr, reg, 16, buf);
+			}
+	}
 }
 
 static int imx241_probe_probe(struct i2c_client *client)
@@ -137,8 +163,10 @@ static int imx241_probe_probe(struct i2c_client *client)
 	gpiod_set_value_cansleep(pwdn, 0);
 	msleep(20);
 
-	for (i = 0; i < ARRAY_SIZE(addrs); i++)
-		dump(client, addrs[i] ? addrs[i] : client->addr);
+	dump(client, client->addr);
+	if (!dump_limits)
+		for (i = 1; i < ARRAY_SIZE(addrs); i++)
+			dump(client, addrs[i]);
 
 	if (hold_s) {
 		dev_info(dev, "holding power for %u s\n", hold_s);

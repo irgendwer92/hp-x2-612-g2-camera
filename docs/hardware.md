@@ -131,3 +131,11 @@ Measured on qcam PNG output (gamma-encoded), paper against the lens:
   leaving even the rear camera unpowered for that boot. Fixed to 1.2132 V (n = 19), which is what the
   Windows driver programs (it rounds up). All board-data voltages are now checked against the grids:
   CORE 900 mV + n × 25 mV; ANA/VCM/VIO/VSIO/AUX1/AUX2 875 mV + n × 17.8 mV.
+
+### 2026-10-14, front camera answers
+- With 0004 (AUX1 1.2132 V, AUX2 1.8006 V, GPIO4 analog enable, GPIO5/6 high) the front sensor
+  answers at the ACPI address 0x37 on i2c-3 (no answer at 0x10/0x1a/0x36; GPIO3/VCM not needed).
+- ID registers: model 0x0241 (IMX241), revision 0x00, manufacturer 0x0b (Sony), SMIA version 0x0a
+  (SMIA 1.0), pixel order 0x01 (RGGB), data pedestal 0x0040 (64 at 10 bit).
+- Clock: the TPS68470 clock is shared; with the OV8858 holding it at 24 MHz, setting 19.2 MHz fails
+  with -EBUSY. The IMX241 answers at 24 MHz.
