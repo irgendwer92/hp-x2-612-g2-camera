@@ -8,7 +8,7 @@ of the HP Pro x2 612 G2 tablet on its Intel IPU3, for use through libcamera.
 > "Internal back camera", and it streams in `cam` and `qcam`. Image quality is
 > uncalibrated (no IPU3 tuning file yet).
 
-The front camera (ACPI `INT347F`, believed to be a Sony IMX241) has no Linux
+The front camera (ACPI `INT347F`, a Sony IMX241 per HP's Windows driver) has no Linux
 driver and is out of scope.
 
 ## Why it doesn't work upstream
