@@ -12,6 +12,7 @@
 #include <linux/device.h>
 #include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
+#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/pm_runtime.h>
@@ -1830,19 +1831,20 @@ static int ov8858_configure_regulators(struct ov8858 *ov8858)
 				       ov8858->supplies);
 }
 
-static int ov8858_parse_of(struct ov8858 *ov8858)
+static int ov8858_parse_of(struct ov8858 *ov8858, struct device *dev)
 {
 	struct v4l2_fwnode_endpoint vep = { .bus_type = V4L2_MBUS_CSI2_DPHY };
-	struct i2c_client *client = v4l2_get_subdevdata(&ov8858->subdev);
-	struct device *dev = &client->dev;
 	struct fwnode_handle *endpoint;
 	int ret;
 
+	/*
+	 * On ACPI platforms the fwnode graph is built by the ipu-bridge
+	 * driver, which may not have run yet. Defer probing until it has.
+	 */
 	endpoint = fwnode_graph_get_next_endpoint(dev_fwnode(dev), NULL);
-	if (!endpoint) {
-		dev_err(dev, "Failed to get endpoint\n");
-		return -EINVAL;
-	}
+	if (!endpoint)
+		return dev_err_probe(dev, -EPROBE_DEFER,
+				     "waiting for fwnode graph endpoint\n");
 
 	ret = v4l2_fwnode_endpoint_parse(endpoint, &vep);
 	fwnode_handle_put(endpoint);
@@ -1876,10 +1878,30 @@ static int ov8858_probe(struct i2c_client *client)
 	if (!ov8858)
 		return -ENOMEM;
 
+	ret = ov8858_parse_of(ov8858, dev);
+	if (ret)
+		return ret;
+
 	ov8858->xvclk = devm_v4l2_sensor_clk_get(dev, "xvclk");
 	if (IS_ERR(ov8858->xvclk))
 		return dev_err_probe(dev, PTR_ERR(ov8858->xvclk),
 				     "Failed to get xvclk\n");
+
+	/*
+	 * The register tables assume a 24 MHz xvclk. On ACPI platforms
+	 * devm_v4l2_sensor_clk_get() programs the clock to the firmware
+	 * provided "clock-frequency" (19.2 MHz on IPU3 designs), but the
+	 * clock provider (e.g. the TPS68470 PMIC) can usually generate
+	 * 24 MHz, so ask for that. On OF platforms the rate is set through
+	 * assigned-clock-rates and left untouched here.
+	 */
+	if (!is_of_node(dev_fwnode(dev)) &&
+	    clk_get_rate(ov8858->xvclk) != OV8858_XVCLK_FREQ) {
+		ret = clk_set_rate(ov8858->xvclk, OV8858_XVCLK_FREQ);
+		if (ret)
+			dev_warn(dev, "Failed to set xvclk to %u Hz: %d\n",
+				 OV8858_XVCLK_FREQ, ret);
+	}
 
 	ov8858->reset_gpio = devm_gpiod_get_optional(dev, "reset",
 						     GPIOD_OUT_HIGH);
@@ -1899,10 +1921,6 @@ static int ov8858_probe(struct i2c_client *client)
 	ret = ov8858_configure_regulators(ov8858);
 	if (ret)
 		return dev_err_probe(dev, ret, "Failed to get regulators\n");
-
-	ret = ov8858_parse_of(ov8858);
-	if (ret)
-		return ret;
 
 	ret = ov8858_init_ctrls(ov8858);
 	if (ret)
@@ -1981,11 +1999,18 @@ static const struct of_device_id ov8858_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, ov8858_of_match);
 
+static const struct acpi_device_id ov8858_acpi_match[] = {
+	{ "INT3477" },
+	{ /* sentinel */ }
+};
+MODULE_DEVICE_TABLE(acpi, ov8858_acpi_match);
+
 static struct i2c_driver ov8858_i2c_driver = {
 	.driver = {
 		.name = "ov8858",
 		.pm = &ov8858_pm_ops,
 		.of_match_table = ov8858_of_match,
+		.acpi_match_table = ov8858_acpi_match,
 	},
 	.probe		= ov8858_probe,
 	.remove		= ov8858_remove,
