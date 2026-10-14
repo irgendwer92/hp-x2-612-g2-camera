@@ -5,9 +5,9 @@ Not for upstream yet: unverified on hardware.
 
 The front IMX241 camera (ACPI INT347F, module FN50FF-562H, I2C3 0x37,
 CSI-2 port 1, 2 lanes) shares the TPS68470 with the rear OV8858. From the
-Windows control-logic and imx241 drivers: VAUX1 is its core supply (1.2 V for
-this module, set to 1.2132 V as Windows does since 1.2 V is not on the
-regulator grid), VAUX2 its I/O supply (1.8 V), PMIC GPIO4 enables an
+Windows control-logic and imx241 drivers: VAUX1 is its core supply (the imx241
+driver leaves it unset for this module, so the 1.05 V default applies,
+rounded up to the regulator grid as Windows does: 1.053 V), VAUX2 its I/O supply (1.8 V), PMIC GPIO4 enables an
 external 2.8 V analog regulator, GPIO3 a VCM supply, and GPIO5/GPIO6 are
 driven high to take the sensor out of reset/powerdown.
 
@@ -19,13 +19,13 @@ Signed-off-by: TODO <TODO>
 ---
 --- a/drivers/platform/x86/intel/int3472/tps68470_board_data.c
 +++ b/drivers/platform/x86/intel/int3472/tps68470_board_data.c
-@@ -464,6 +464,46 @@
+@@ -464,6 +464,47 @@
  	.consumer_supplies = int3477_vsio_consumer_supplies,
  };
  
 +/*
 + * Front IMX241 camera (INT347F, module FN50FF-562H) on the same PMIC. The
-+ * Windows driver powers it from VAUX1 (core, 1.2 V for this module) and
++ * Windows driver powers it from VAUX1 (core, 1.05 V for this module) and
 + * VAUX2 (I/O, 1.8 V); its 2.8 V analog supply is an external regulator
 + * enabled by PMIC GPIO4. Supply names follow the ccs driver.
 + */
@@ -38,13 +38,14 @@ Signed-off-by: TODO <TODO>
 +};
 +
 +/*
-+ * 1.2 V is not on the AUX regulator's 17.8 mV grid; like the Windows driver,
-+ * round up to the next step.
++ * The Windows imx241 driver leaves the core voltage unset for this module, so
++ * the control logic uses its 1.05 V default. That is not on the AUX regulator's
++ * 17.8 mV grid; like the Windows driver, round up to the next step.
 + */
 +static const struct regulator_init_data hp_x2_612_g2_tps68470_aux1_reg_init_data = {
 +	.constraints = {
-+		.min_uV = 1213200,
-+		.max_uV = 1213200,
++		.min_uV = 1053000,
++		.max_uV = 1053000,
 +		.apply_uV = true,
 +		.valid_ops_mask = REGULATOR_CHANGE_STATUS,
 +	},
@@ -66,7 +67,7 @@ Signed-off-by: TODO <TODO>
  static const struct tps68470_regulator_platform_data hp_x2_612_g2_tps68470_pdata = {
  	.reg_init_data = {
  		[TPS68470_CORE] = &hp_x2_612_g2_tps68470_core_reg_init_data,
-@@ -471,6 +511,8 @@
+@@ -471,6 +512,8 @@
  		[TPS68470_VCM]  = &hp_x2_612_g2_tps68470_vcm_reg_init_data,
  		[TPS68470_VIO]  = &hp_x2_612_g2_tps68470_vio_reg_init_data,
  		[TPS68470_VSIO] = &hp_x2_612_g2_tps68470_vsio_reg_init_data,
@@ -75,7 +76,7 @@ Signed-off-by: TODO <TODO>
  	},
  };
  
-@@ -525,6 +567,18 @@
+@@ -525,6 +568,18 @@
  	}
  };
  
@@ -94,7 +95,7 @@ Signed-off-by: TODO <TODO>
  static const struct property_entry int3472_tps68470_daisy_chain_gpio_props[] = {
  	PROPERTY_ENTRY_BOOL("daisy-chain-enable"),
  	{ }
-@@ -587,9 +641,10 @@
+@@ -587,9 +642,10 @@
  	.dev_name = "i2c-INT3472:05",
  	.tps68470_regulator_pdata = &hp_x2_612_g2_tps68470_pdata,
  	.tps68470_gpio_swnode = &int3472_tps68470_daisy_chain_gpio_swnode,

@@ -150,3 +150,14 @@ vt_sys_clk_div 1–2, vt_pix_clk_div 8–20; op_sys_clk_div 1–2, op_pix_clk_di
 **Zero (missing):** min/max vt_sys_clk_freq, vt_pix_clk_freq (0x1124–0x1133) and op_sys_clk_freq,
 op_pix_clk_freq (0x1164–0x116b). The ccs driver's PLL calculator needs these, so ccs would need a
 static data (limits override) file. Data format descriptors at 0x0040 and 0x00c0 are populated.
+
+### Correction (2026-10-14): front camera core voltage
+The imx241.sys check at 0x140007548 calls `_stricmp` (returns 0 on a *match*): modules FN50FF469H and
+FN50FF-562H get VD = 0 ("unset" → control-logic default 1050 mV); every *other* module gets 1200 mV.
+The earlier reading was inverted. 0004 now sets VAUX1 to 1.0530 V (n = 10, 1050 mV rounded up to the
+grid, as Windows does). The two probe runs before this correction ran the IMX241 core at 1.2132 V for a
+few seconds each; the sensor responded normally.
+Further IMX241 findings from the Windows driver (docs/imx241-windows-re.md): Windows uses a 19.2 MHz
+MCLK with a 2592×1944 readout (5 MP; the SMIA limit registers' 1936×1096 array size is wrong), PLL
+998.4 MHz, link frequency 499.2 MHz, VT dividers in manufacturer registers 0x3037/0x3038 (standard
+0x0301/0x0303 never written), 2 pixels per VT clock, and mandatory manufacturer register writes.

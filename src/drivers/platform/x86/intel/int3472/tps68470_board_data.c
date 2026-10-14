@@ -466,7 +466,7 @@ static const struct regulator_init_data hp_x2_612_g2_tps68470_vsio_reg_init_data
 
 /*
  * Front IMX241 camera (INT347F, module FN50FF-562H) on the same PMIC. The
- * Windows driver powers it from VAUX1 (core, 1.2 V for this module) and
+ * Windows driver powers it from VAUX1 (core, 1.05 V for this module) and
  * VAUX2 (I/O, 1.8 V); its 2.8 V analog supply is an external regulator
  * enabled by PMIC GPIO4. Supply names follow the ccs driver.
  */
@@ -479,13 +479,14 @@ static struct regulator_consumer_supply int347f_aux2_consumer_supplies[] = {
 };
 
 /*
- * 1.2 V is not on the AUX regulator's 17.8 mV grid; like the Windows driver,
- * round up to the next step.
+ * The Windows imx241 driver leaves the core voltage unset for this module, so
+ * the control logic uses its 1.05 V default. That is not on the AUX regulator's
+ * 17.8 mV grid; like the Windows driver, round up to the next step.
  */
 static const struct regulator_init_data hp_x2_612_g2_tps68470_aux1_reg_init_data = {
 	.constraints = {
-		.min_uV = 1213200,
-		.max_uV = 1213200,
+		.min_uV = 1053000,
+		.max_uV = 1053000,
 		.apply_uV = true,
 		.valid_ops_mask = REGULATOR_CHANGE_STATUS,
 	},
