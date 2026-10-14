@@ -52,3 +52,23 @@ Consumer device: `i2c-INT3477:00`
   (TPS68470 I2C daisy chain). Board data now sets `daisy-chain-enable` (GPIO1/2 inputs).
 - Rail switch-off failed again afterwards (`CORE: failed to disable: -EAGAIN`); full power-off
   needed after each failed experiment.
+
+### 2026-10-14, third run (daisy chain enabled)
+- Bus stays healthy for the whole hold (no arbitration loss / timeouts) with GPIO1/2 as inputs.
+- Sensor NACKs at 0x10 and 0x36 for: GPIOs 0, 3, 4, 5, 6 driven high (together and singly), and every
+  raw-level combination of s_resetn (9), s_enable (7) and s_idle (8). EEPROM 0x50 answers throughout.
+- TPS68470 registers during the hold: PLLCTL d7, CLKCFG1 0a (HCLK A+B), SGPO 05, GPDI 59
+  (GPIO1/2/5 read low; GPIO5 low despite pull-up), VAVAL 6d / VACTL 01, VDVAL 0c / VDCTL 05,
+  VSIOVAL 34 / S_I2C_CTL 03, VIOVAL 34, VCM/AUX1/AUX2 off. Matches the intended config.
+
+## Windows driver (HP SoftPaq sp93485, Intel IPU3 camera driver 30.15063.6.8317)
+- `ov8858.inf` binds `ACPI\INT3477` ("HP Truevision 8MP Rear") and ships tuning for module
+  `OV8858_6BA803T2_SKY` — confirms OV8858 + our module. `imx241.inf` covers the front module
+  `IMX241_FN50FF-562H` (front sensor confirmed as IMX241).
+- No power configuration in any INF. `iactrllogic64.sys` (control logic for `ACPI\INT3472`) has
+  distinct TPS68470 code paths: `CrdGTi*` (CRD-G, as on the Surface Go), `CrdG2Ti*` (CRD-G2),
+  `CrdG2TiQuantaGpio` (CRD-G2 with an OEM-specific GPIO variant), and `SSCrdG2Ti*` including
+  `SetI2CDaisyChain` and `SetHCLKAB`. This board's daisy-chain wiring points at CRD-G2, i.e. the
+  Surface Go (CRD-G) sequence copied in 0001 is likely the wrong model. See
+  `docs/windows-ctrllogic-re.md` for the reverse-engineered sequence.
+- The Intel binaries and tuning files are not redistributable and are not part of this repo.
