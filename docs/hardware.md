@@ -171,3 +171,11 @@ MCLK with a 2592×1944 readout (5 MP; the SMIA limit registers' 1936×1096 array
   (0x140012cb4) calls IoActive (0x140013920) for any sensor, which sets S_I2C_CTL (0x43) |= 3,
   i.e. VSIO and the sensor I2C switch, refcounted. 0004 now adds VSIO as "vsio" supply of the
   IMX241 and the driver enables it first.
+
+### 2026-10-14, front camera works
+- With VSIO as an IMX241 supply (0004) and the rear idle (PipeWire stopped), the front camera streams
+  in the test boot: correct SMIA colour bars and a real 1296x972 image (binned mode), no errors.
+- System libcamera 0.7.2 (no IMX241 helper) rejects only the front camera ("Failed to create camera
+  sensor helper for imx241") and still registers the rear camera. The patched local build
+  (libcamera/patches 0005/0006) registers both: "Internal back camera" and "Internal front camera".
+- Not yet tested: full 2592x1944 mode, libcamera streaming from the front camera.
