@@ -52,6 +52,13 @@ unload() {
 	done
 }
 
+# The PMIC driver finds its sensor through the ACPI _DEP list, which a
+# successful probe consumes. A second probe in the same boot then fails with
+# "INT3472 seems to have no dependents", so this test works once per boot.
+if [ -e /sys/bus/i2c/devices/i2c-INT3477:00 ]; then
+	die "the PMIC already probed in this boot (i2c-INT3477:00 exists); reboot, then run this again"
+fi
+
 dmesg_mark=$(dmesg | wc -l)
 
 say "unloading in-tree modules"
