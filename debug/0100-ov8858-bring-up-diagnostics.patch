@@ -1,0 +1,55 @@
+Not for upstream: bring-up diagnostics for ov8858 (dbg_settle_ms, dbg_hold_s).
+
+--- a/drivers/media/i2c/ov8858.c	2026-10-14 15:19:33.556929089 +0200
++++ b/drivers/media/i2c/ov8858.c	2026-10-14 15:19:33.616737263 +0200
+@@ -45,6 +45,14 @@
+ #define OV8858_REG_CHIP_ID		OV8858_REG_24BIT(0x300a)
+ #define OV8858_CHIP_ID			0x008858
+ 
++/* Bring-up diagnostics, not for upstream. Both default to off. */
++static unsigned int dbg_settle_ms;
++module_param(dbg_settle_ms, uint, 0644);
++MODULE_PARM_DESC(dbg_settle_ms, "extra delay after each power-on step (ms)");
++static unsigned int dbg_hold_s;
++module_param(dbg_hold_s, uint, 0644);
++MODULE_PARM_DESC(dbg_hold_s, "keep the sensor powered this long after a failed ID read (s)");
++
+ #define OV8858_REG_SUB_ID		OV8858_REG_8BIT(0x302a)
+ #define OV8858_R1A			0xb0
+ #define OV8858_R2A			0xb2
+@@ -1633,6 +1641,11 @@
+ 		goto disable_clk;
+ 	}
+ 
++	if (dbg_settle_ms) {
++		dev_info(dev, "dbg: regulators on, settling %u ms\n", dbg_settle_ms);
++		msleep(dbg_settle_ms);
++	}
++
+ 	/*
+ 	 * The chip manual only suggests 8192 cycles prior to first SCCB
+ 	 * transaction, but a double sleep between the release of gpios
+@@ -1644,6 +1657,11 @@
+ 	fsleep(delay_us);
+ 	gpiod_set_value_cansleep(ov8858->pwdn_gpio, 0);
+ 	fsleep(delay_us);
++	if (dbg_settle_ms) {
++		dev_info(dev, "dbg: reset/powerdown released, settling %u ms\n",
++			 dbg_settle_ms);
++		msleep(dbg_settle_ms);
++	}
+ 
+ 	return 0;
+ 
+@@ -1950,6 +1968,11 @@
+ 	pm_runtime_enable(dev);
+ 
+ 	ret = ov8858_check_sensor_id(ov8858);
++	if (ret && dbg_hold_s) {
++		dev_info(dev, "dbg: ID read failed, holding power for %u s\n",
++			 dbg_hold_s);
++		msleep(dbg_hold_s * 1000);
++	}
+ 	if (ret)
+ 		goto err_power_off;
+ 
