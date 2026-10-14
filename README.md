@@ -1,17 +1,20 @@
 # HP Pro x2 612 G2 camera on Linux
 
-Out-of-tree kernel patches to bring up the **rear 8 MP camera (OmniVision OV8858)**
-of the HP Pro x2 612 G2 tablet on its Intel IPU3, for use through libcamera.
+Out-of-tree kernel patches and a patched libcamera that bring up both cameras
+of the HP Pro x2 612 G2 tablet on its Intel IPU3:
 
-> **Status: working.** With these patches on Linux 7.2.9 the rear camera probes
-> ("Detected OV8858 sensor, revision 0xb2"), libcamera lists it as
-> "Internal back camera", and it streams in `cam` and `qcam`. Image quality is
-> uncalibrated with stock libcamera; see Risks.
+- **Rear, 8 MP OmniVision OV8858:** works, with lens shading correction and the
+  correct black level when the patched libcamera is used.
+- **Front, 5 MP Sony IMX241:** works with a new `imx241` driver (2592x1944 and
+  1296x972 at 30 fps) and the patched libcamera; see
+  [`docs/front-camera.md`](docs/front-camera.md).
 
-The front camera (ACPI `INT347F`, Sony IMX241) has a new driver (`0006`). It
-streams in a test boot at 2592x1944 and 1296x972, and shows a live image in
-qcam with the patched libcamera; orientation is correct (unmirrored). See
-[`docs/front-camera.md`](docs/front-camera.md).
+Tested on Arch Linux with kernel 7.2.9 and libcamera 0.7.2. With the patched
+libcamera, PipeWire offers both cameras to applications ("Internal back camera",
+"Internal front camera"). Stock libcamera only shows the rear camera.
+
+Electron/Chromium apps (Signal Desktop, Chromium, …) need
+`--enable-features=WebRtcPipeWireCamera` to use PipeWire cameras.
 
 ## Why it doesn't work upstream
 
