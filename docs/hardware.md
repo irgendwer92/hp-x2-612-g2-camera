@@ -78,3 +78,13 @@ Consumer device: `i2c-INT3477:00`
   `Detected OV8858 sensor, revision 0xb2` (R2A, so 4 lanes are supported), `Instantiated dw9714 VCM`,
   and libcamera registers "Internal back camera" (`\_SB_.PCI0.LNK0`). `cam` and `qcam` stream.
 - Reprobing the PMIC in the same boot fails ("INT3472 seems to have no dependents"); test once per boot.
+
+### 2026-10-14, first picture
+- `qcam`: orientation correct, Bayer order correct (reds stay red), autofocus (dw9714 + libcamera
+  contrast AF) converges, but slowly.
+- Strong lens-shading cast (magenta centre, cyan corners) plus vignetting. libcamera 0.7.2's IPU3
+  IPA only implements Af, Agc, Awb, BlackLevelCorrection and ToneMapping. It has no lens-shading
+  or CCM algorithm, although the ImgU hardware has both (`gd_shading`, `ccm`). Fixing the cast needs
+  an IPU3 shading algorithm in libcamera, not just an `ov8858.yaml`.
+- The module EEPROM (0x50–0x53) likely holds factory OTP calibration (the Windows ov8858.sys has
+  NVM-read routines); a possible source for per-module shading/AWB data.
