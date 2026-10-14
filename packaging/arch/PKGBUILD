@@ -1,0 +1,49 @@
+# Local PKGBUILD: build from a checkout of this repository.
+#   cd packaging/arch && makepkg -si
+#   _kver=7.2.10-arch1-1 makepkg -si      # vendor for another kernel release
+#
+# prepare() runs the repository's `make dist-tree`, i.e. scripts/prepare.sh:
+# fetches the pristine upstream driver files for the kernel's tag (network on
+# first use; cached in <repo>/build/<tag>/pristine) and applies patches/*.patch.
+# The patched result is vendored into /usr/src/hp-x2-612-g2-camera-<pkgver>/, so
+# DKMS itself builds offline. dkms.conf limits DKMS to the vendored x.y series;
+# after moving to a new x.y kernel, rebuild this package (see dkms.conf).
+# Note: makepkg's pkgver() rewrites the pkgver= line below (git-derived version).
+
+pkgname=hp-x2-612-g2-camera-dkms
+_pkgbase=hp-x2-612-g2-camera
+pkgver=7.2.9
+pkgrel=1
+pkgdesc="Patched TPS68470/INT3472, ipu-bridge and OV8858 drivers for the HP Pro x2 612 G2 rear camera (DKMS)"
+arch=('x86_64')
+url="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git"
+license=('GPL-2.0-only')
+depends=('dkms' 'libcamera')
+makedepends=('curl' 'patch' 'git')
+optdepends=('pipewire-libcamera: expose the camera to PipeWire / xdg-desktop-portal apps'
+            'libcamera-tools: cam / qcam for testing'
+            'v4l-utils: media-ctl for inspecting the media graph')
+source=()
+sha256sums=()
+
+_repo=$(realpath "$startdir/../..")
+_kver=${_kver:-$(uname -r)}
+
+prepare() {
+  rm -rf "$srcdir/dist"
+  make -C "$_repo" dist-tree KVER="$_kver" DISTDIR="$srcdir/dist"
+}
+
+pkgver() {
+  cat "$srcdir"/dist/*/VERSION
+}
+
+package() {
+  local tree
+  tree=$(echo "$srcdir"/dist/"$_pkgbase"-*/)
+  install -dm755 "$pkgdir/usr/src"
+  cp -r --no-preserve=ownership "$tree" "$pkgdir/usr/src/$_pkgbase-$pkgver"
+  chmod -R u=rwX,go=rX "$pkgdir/usr/src/$_pkgbase-$pkgver"
+  install -Dm644 "$_repo/packaging/modprobe.d/$_pkgbase.conf" \
+    "$pkgdir/usr/lib/modprobe.d/$_pkgbase.conf"
+}
