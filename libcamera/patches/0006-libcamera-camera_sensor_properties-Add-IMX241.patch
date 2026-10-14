@@ -1,7 +1,7 @@
 From 43da9008c26d150ae411598a3b8cec24e1b8114c Mon Sep 17 00:00:00 2001
 From: irgend wer <irgend@wer.de>
 Date: Wed, 14 Oct 2026 20:37:26 +0200
-Subject: [PATCH 6/6] libcamera: camera_sensor_properties: Add IMX241
+Subject: [PATCH 6/7] libcamera: camera_sensor_properties: Add IMX241
 
 Add static properties for the Sony IMX241. The sensor is a type 1/5
 (3.63 mm diagonal) back-illuminated CMOS sensor with 2592x1944 active

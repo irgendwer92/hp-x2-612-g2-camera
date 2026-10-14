@@ -1,7 +1,7 @@
 From 6ead9fd42272f4d14d941d5b856e8045b7a2bfcf Mon Sep 17 00:00:00 2001
 From: irgend wer <irgend@wer.de>
 Date: Wed, 14 Oct 2026 20:37:26 +0200
-Subject: [PATCH 5/6] ipa: libipa: camera_sensor_helper: Add IMX241
+Subject: [PATCH 5/7] ipa: libipa: camera_sensor_helper: Add IMX241
 
 Add a camera sensor helper for the Sony IMX241, a 5 MP SMIA 1.0 sensor
 used as the front camera of the HP Pro x2 612 G2.

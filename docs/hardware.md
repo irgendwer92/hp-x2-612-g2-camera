@@ -182,3 +182,11 @@ MCLK with a 2592×1944 readout (5 MP; the SMIA limit registers' 1936×1096 array
 - Full 2592x1944 mode at 24 MHz / 498 MHz link also streams cleanly (4 frames of 6469632 bytes:
   3328 bytes per line × 1944). qcam from the patched local libcamera shows a live, processed
   front-camera image ("okayish sharp"); mirror orientation still to be confirmed with a text test.
+
+### 2026-10-14, front camera brightness
+- In an evening-lit room the IPU3 AGC saturated at 33 ms / 8x analogue gain with a dark image.
+  Measured raw signal above black (64) at fixed 15 ms: 3.7 DN at 1x, 27.6 DN at 8x (ratio 7.5,
+  so the IMX241 analogue gain works as 256/(256 − code)); the sensor is simply insensitive.
+- libcamera patch 0007: the IPU3 AGC now uses the sensor digital gain (V4L2_CID_DIGITAL_GAIN,
+  default value = unity) up to 4x, keeping 30 fps (user requirement). The AGC settles at about
+  1.5x digital gain in that room.

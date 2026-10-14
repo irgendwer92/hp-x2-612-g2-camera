@@ -1,0 +1,180 @@
+From 233f5812c5de4ac42ca964e080c8afa3e31b7ed6 Mon Sep 17 00:00:00 2001
+From: irgend wer <irgend@wer.de>
+Date: Wed, 14 Oct 2026 21:39:21 +0200
+Subject: [PATCH 7/7] ipa: ipu3: agc: Use the sensor digital gain
+
+The IPU3 AGC only drives exposure time and analogue gain, and discards
+the digital gain computed by AgcMeanLuminance. Sensors with little
+analogue gain then stay too dark in dim light: the IMX241 front camera
+of the HP Pro x2 612 G2 sits at 33 ms and 8x analogue gain in an
+evening-lit room, well below the AGC target.
+
+When the sensor exposes V4L2_CID_DIGITAL_GAIN, apply the remaining gain
+there, limited to 4x to bound the noise, treating the control's default
+value as unity. Account for it in the effective exposure fed back to the
+AGC, report it in the DigitalGain metadata, and let the pipeline handler
+delay it like the analogue gain. The frame rate is not changed.
+
+On the IMX241 the AGC now settles at about 1.5x digital gain at 30 fps.
+
+Signed-off-by: TODO <TODO>
+---
+ src/ipa/ipu3/algorithms/agc.cpp      | 12 +++++++++-
+ src/ipa/ipu3/ipa_context.h           |  4 ++++
+ src/ipa/ipu3/ipu3.cpp                | 36 ++++++++++++++++++++++++++++
+ src/libcamera/pipeline/ipu3/ipu3.cpp |  3 +++
+ 4 files changed, 54 insertions(+), 1 deletion(-)
+
+diff --git a/src/ipa/ipu3/algorithms/agc.cpp b/src/ipa/ipu3/algorithms/agc.cpp
+index d6a7036c6..5dfb95dc2 100644
+--- a/src/ipa/ipu3/algorithms/agc.cpp
++++ b/src/ipa/ipu3/algorithms/agc.cpp
+@@ -110,6 +110,7 @@ int Agc::configure(IPAContext &context,
+ 
+ 	/* Configure the default exposure and gain. */
+ 	activeState.agc.gain = minAnalogueGain_;
++	activeState.agc.digitalGain = 1.0;
+ 	activeState.agc.exposure = 10ms / configuration.sensor.lineDuration;
+ 
+ 	context.activeState.agc.constraintMode = constraintModes().begin()->first;
+@@ -219,7 +220,8 @@ void Agc::process(IPAContext &context, [[maybe_unused]] const uint32_t frame,
+ 	utils::Duration exposureTime = context.configuration.sensor.lineDuration
+ 				     * frameContext.sensor.exposure;
+ 	double analogueGain = frameContext.sensor.gain;
+-	utils::Duration effectiveExposureValue = exposureTime * analogueGain;
++	double digitalGain = frameContext.sensor.digitalGain;
++	utils::Duration effectiveExposureValue = exposureTime * analogueGain * digitalGain;
+ 
+ 	utils::Duration newExposureTime;
+ 	double aGain, qGain, dGain;
+@@ -236,8 +238,16 @@ void Agc::process(IPAContext &context, [[maybe_unused]] const uint32_t frame,
+ 	/* Update the estimated exposure time and gain. */
+ 	activeState.agc.exposure = newExposureTime / context.configuration.sensor.lineDuration;
+ 	activeState.agc.gain = aGain;
++	/*
++	 * dGain is what exposure time and analogue gain could not provide.
++	 * Apply it with the sensor's digital gain when available, limited to
++	 * maxDigitalGain.
++	 */
++	activeState.agc.digitalGain =
++		std::clamp(dGain, 1.0, context.configuration.agc.maxDigitalGain);
+ 
+ 	metadata.set(controls::AnalogueGain, frameContext.sensor.gain);
++	metadata.set(controls::DigitalGain, frameContext.sensor.digitalGain);
+ 	metadata.set(controls::ExposureTime, exposureTime.get<std::micro>());
+ 
+ 	/* \todo Use VBlank value calculated from each frame exposure. */
+diff --git a/src/ipa/ipu3/ipa_context.h b/src/ipa/ipu3/ipa_context.h
+index 9800cf4db..0319aacfc 100644
+--- a/src/ipa/ipu3/ipa_context.h
++++ b/src/ipa/ipu3/ipa_context.h
+@@ -37,6 +37,8 @@ struct IPASessionConfiguration {
+ 		utils::Duration maxExposureTime;
+ 		double minAnalogueGain;
+ 		double maxAnalogueGain;
++		double maxDigitalGain;
++		int32_t digitalGainUnity;
+ 	} agc;
+ 
+ 	struct {
+@@ -60,6 +62,7 @@ struct IPAActiveState {
+ 	struct {
+ 		uint32_t exposure;
+ 		double gain;
++		double digitalGain;
+ 		uint32_t constraintMode;
+ 		uint32_t exposureMode;
+ 	} agc;
+@@ -88,6 +91,7 @@ struct IPAFrameContext : public FrameContext {
+ 	struct {
+ 		uint32_t exposure;
+ 		double gain;
++		double digitalGain;
+ 	} sensor;
+ 
+ 	struct {
+diff --git a/src/ipa/ipu3/ipu3.cpp b/src/ipa/ipu3/ipu3.cpp
+index ed29b3ce5..7cd88a5d8 100644
+--- a/src/ipa/ipu3/ipu3.cpp
++++ b/src/ipa/ipu3/ipu3.cpp
+@@ -57,6 +57,9 @@ static constexpr uint32_t kMaxCellSizeLog2 = 6;
+ /* Maximum number of frame contexts to be held */
+ static constexpr uint32_t kMaxFrameContexts = 16;
+ 
++/* Maximum sensor digital gain used by the AGC, to bound the noise */
++static constexpr double kMaxDigitalGain = 4.0;
++
+ namespace libcamera {
+ 
+ LOG_DEFINE_CATEGORY(IPAIPU3)
+@@ -226,6 +229,26 @@ void IPAIPU3::updateSessionConfiguration(const ControlInfoMap &sensorControls)
+ 	context_.configuration.agc.minAnalogueGain = camHelper_->gain(minGain);
+ 	context_.configuration.agc.maxAnalogueGain = camHelper_->gain(maxGain);
+ 
++	/*
++	 * Use the sensor's digital gain, if it has one, once exposure time and
++	 * analogue gain are exhausted. The control's default value is taken as
++	 * unity gain. Limit it to kMaxDigitalGain to bound the noise.
++	 */
++	context_.configuration.agc.maxDigitalGain = 1.0;
++	context_.configuration.agc.digitalGainUnity = 0;
++	const auto dGainInfo = sensorControls.find(V4L2_CID_DIGITAL_GAIN);
++	if (dGainInfo != sensorControls.end()) {
++		int32_t unity = dGainInfo->second.def().get<int32_t>();
++		int32_t max = dGainInfo->second.max().get<int32_t>();
++
++		if (unity > 0 && max > unity) {
++			context_.configuration.agc.digitalGainUnity = unity;
++			context_.configuration.agc.maxDigitalGain =
++				std::min(kMaxDigitalGain,
++					 static_cast<double>(max) / unity);
++		}
++	}
++
+ 	/*
+ 	 * The sensor helper expresses the black level on a 16-bit scale, the
+ 	 * ImgU black level correction works on the 10-bit CIO2 output. Keep
+@@ -606,6 +629,14 @@ void IPAIPU3::processStats(const uint32_t frame,
+ 
+ 	frameContext.sensor.exposure = sensorControls.get(V4L2_CID_EXPOSURE).get<int32_t>();
+ 	frameContext.sensor.gain = camHelper_->gain(sensorControls.get(V4L2_CID_ANALOGUE_GAIN).get<int32_t>());
++	frameContext.sensor.digitalGain = 1.0;
++	if (context_.configuration.agc.digitalGainUnity) {
++		const ControlValue &dGain = sensorControls.get(V4L2_CID_DIGITAL_GAIN);
++		if (!dGain.isNone())
++			frameContext.sensor.digitalGain =
++				static_cast<double>(dGain.get<int32_t>()) /
++				context_.configuration.agc.digitalGainUnity;
++	}
+ 
+ 	ControlList metadata(controls::controls);
+ 
+@@ -656,6 +687,11 @@ void IPAIPU3::setControls(unsigned int frame)
+ 	ControlList ctrls(sensorCtrls_);
+ 	ctrls.set(V4L2_CID_EXPOSURE, exposure);
+ 	ctrls.set(V4L2_CID_ANALOGUE_GAIN, gain);
++	if (context_.configuration.agc.digitalGainUnity) {
++		int32_t dGain = std::lround(context_.activeState.agc.digitalGain *
++					    context_.configuration.agc.digitalGainUnity);
++		ctrls.set(V4L2_CID_DIGITAL_GAIN, dGain);
++	}
+ 
+ 	ControlList lensCtrls(lensCtrls_);
+ 	lensCtrls.set(V4L2_CID_FOCUS_ABSOLUTE,
+diff --git a/src/libcamera/pipeline/ipu3/ipu3.cpp b/src/libcamera/pipeline/ipu3/ipu3.cpp
+index 0f3e169d3..0f14fc678 100644
+--- a/src/libcamera/pipeline/ipu3/ipu3.cpp
++++ b/src/libcamera/pipeline/ipu3/ipu3.cpp
+@@ -1085,6 +1085,9 @@ int PipelineHandlerIPU3::registerCameras()
+ 			{ V4L2_CID_ANALOGUE_GAIN, { delays.gainDelay, false } },
+ 			{ V4L2_CID_EXPOSURE, { delays.exposureDelay, false } },
+ 		};
++		/* The IPA uses the sensor digital gain when available. */
++		if (cio2->sensor()->controls().count(V4L2_CID_DIGITAL_GAIN))
++			params[V4L2_CID_DIGITAL_GAIN] = { delays.gainDelay, false };
+ 
+ 		data->delayedCtrls_ =
+ 			std::make_unique<DelayedControls>(cio2->sensor()->device(),
+-- 
+2.56.0
+
