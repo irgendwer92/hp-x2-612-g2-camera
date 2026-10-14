@@ -292,6 +292,7 @@ struct imx241 {
 	struct clk *xclk;
 	const struct imx241_clk_cfg *clk_cfg;
 	struct regulator_bulk_data supplies[IMX241_NUM_SUPPLIES];
+	struct regulator *vsio;
 	struct regulator *avdd;
 	struct gpio_desc *avdd_gpio;
 	struct gpio_desc *reset_gpio;
@@ -835,11 +836,19 @@ static int imx241_power_on(struct device *dev)
 			msleep(IMX241_MIN_POWER_OFF_MS - off_ms);
 	}
 
+	if (imx241->vsio) {
+		ret = regulator_enable(imx241->vsio);
+		if (ret) {
+			dev_err(dev, "failed to enable vsio: %d\n", ret);
+			return ret;
+		}
+	}
+
 	if (imx241->avdd) {
 		ret = regulator_enable(imx241->avdd);
 		if (ret) {
 			dev_err(dev, "failed to enable avdd: %d\n", ret);
-			return ret;
+			goto err_vsio;
 		}
 	}
 	gpiod_set_value_cansleep(imx241->avdd_gpio, 1);
@@ -873,6 +882,9 @@ err_regulators:
 	gpiod_set_value_cansleep(imx241->avdd_gpio, 0);
 	if (imx241->avdd)
 		regulator_disable(imx241->avdd);
+err_vsio:
+	if (imx241->vsio)
+		regulator_disable(imx241->vsio);
 
 	imx241->power_off_time = ktime_get();
 
@@ -895,6 +907,8 @@ static int imx241_power_off(struct device *dev)
 	gpiod_set_value_cansleep(imx241->avdd_gpio, 0);
 	if (imx241->avdd)
 		regulator_disable(imx241->avdd);
+	if (imx241->vsio)
+		regulator_disable(imx241->vsio);
 
 	imx241->power_off_time = ktime_get();
 	dev_dbg(dev, "powered down\n");
@@ -1025,6 +1039,19 @@ static int imx241_get_power_resources(struct device *dev,
 	 * external regulator with a GPIO instead of describing it as a
 	 * regulator, and ACPI platforms do not get dummy regulators.
 	 */
+	/*
+	 * On TPS68470 based designs the sensor I2C/IO switch (VSIO) is shared
+	 * between the cameras and must be on while this sensor is powered;
+	 * the Windows control logic enables it for every sensor.
+	 */
+	imx241->vsio = devm_regulator_get_optional(dev, "vsio");
+	if (IS_ERR(imx241->vsio)) {
+		if (PTR_ERR(imx241->vsio) != -ENODEV)
+			return dev_err_probe(dev, PTR_ERR(imx241->vsio),
+					     "failed to get vsio regulator\n");
+		imx241->vsio = NULL;
+	}
+
 	imx241->avdd = devm_regulator_get_optional(dev, "avdd");
 	if (IS_ERR(imx241->avdd)) {
 		if (PTR_ERR(imx241->avdd) != -ENODEV)

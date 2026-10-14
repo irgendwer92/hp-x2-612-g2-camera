@@ -11,6 +11,12 @@ rounded up to the regulator grid as Windows does: 1.053 V), VAUX2 its I/O supply
 external 2.8 V analog regulator, GPIO3 a VCM supply, and GPIO5/GPIO6 are
 driven high to take the sensor out of reset/powerdown.
 
+The front sensor also needs the PMIC VSIO rail (S_I2C_CTL), which on
+this board otherwise only feeds the rear OV8858: the Windows control
+logic enables it in the common sensor power-on path for either camera,
+and the IMX241 NACKs on I2C while it is off. Add it as a "vsio" supply
+of the front sensor.
+
 Add the regulator consumers (named after the ccs driver's supplies) and
 a GPIO lookup table for i2c-INT347F:00. Nothing is powered unless a
 driver binds to the sensor.
@@ -19,7 +25,20 @@ Signed-off-by: TODO <TODO>
 ---
 --- a/drivers/platform/x86/intel/int3472/tps68470_board_data.c
 +++ b/drivers/platform/x86/intel/int3472/tps68470_board_data.c
-@@ -464,6 +464,47 @@
+@@ -402,6 +402,12 @@
+ 
+ static struct regulator_consumer_supply int3477_vsio_consumer_supplies[] = {
+ 	REGULATOR_SUPPLY("dovdd", "i2c-INT3477:00"),
++	/*
++	 * VSIO also switches the sensor I2C/IO path; the Windows control logic
++	 * enables it for the front IMX241 as well, which does not answer on
++	 * I2C without it.
++	 */
++	REGULATOR_SUPPLY("vsio", "i2c-INT347F:00"),
+ };
+ 
+ static const struct regulator_init_data hp_x2_612_g2_tps68470_core_reg_init_data = {
+@@ -464,6 +470,47 @@
  	.consumer_supplies = int3477_vsio_consumer_supplies,
  };
  
@@ -67,7 +86,7 @@ Signed-off-by: TODO <TODO>
  static const struct tps68470_regulator_platform_data hp_x2_612_g2_tps68470_pdata = {
  	.reg_init_data = {
  		[TPS68470_CORE] = &hp_x2_612_g2_tps68470_core_reg_init_data,
-@@ -471,6 +512,8 @@
+@@ -471,6 +518,8 @@
  		[TPS68470_VCM]  = &hp_x2_612_g2_tps68470_vcm_reg_init_data,
  		[TPS68470_VIO]  = &hp_x2_612_g2_tps68470_vio_reg_init_data,
  		[TPS68470_VSIO] = &hp_x2_612_g2_tps68470_vsio_reg_init_data,
@@ -76,7 +95,7 @@ Signed-off-by: TODO <TODO>
  	},
  };
  
-@@ -525,6 +568,18 @@
+@@ -525,6 +574,18 @@
  	}
  };
  
@@ -95,7 +114,7 @@ Signed-off-by: TODO <TODO>
  static const struct property_entry int3472_tps68470_daisy_chain_gpio_props[] = {
  	PROPERTY_ENTRY_BOOL("daisy-chain-enable"),
  	{ }
-@@ -587,9 +642,10 @@
+@@ -587,9 +648,10 @@
  	.dev_name = "i2c-INT3472:05",
  	.tps68470_regulator_pdata = &hp_x2_612_g2_tps68470_pdata,
  	.tps68470_gpio_swnode = &int3472_tps68470_daisy_chain_gpio_swnode,

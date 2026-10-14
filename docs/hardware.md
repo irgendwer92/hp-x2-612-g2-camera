@@ -161,3 +161,13 @@ Further IMX241 findings from the Windows driver (docs/imx241-windows-re.md): Win
 MCLK with a 2592×1944 readout (5 MP; the SMIA limit registers' 1936×1096 array size is wrong), PLL
 998.4 MHz, link frequency 499.2 MHz, VT dividers in manufacturer registers 0x3037/0x3038 (standard
 0x0301/0x0303 never written), 2 pixels per VT clock, and mandatory manufacturer register writes.
+
+### 2026-10-14, front camera needs VSIO
+- First test boot: imx241 binds next to ov8858 ("Connected 2 cameras"), streams correct SMIA colour
+  bars at 1296x972 (CSI-2 port 1, 2 lanes, 498 MHz, 24 MHz clock). Later power-ups NACK.
+- Every successful front power-up coincided with the rear sensor being powered (the -EBUSY on the
+  shared clock gave it away); every failure had the rear idle. With the rear forced on
+  (power/control=on) the IMX241 answers again. Windows' common CrdG2TiSensor::SensorPowerOn
+  (0x140012cb4) calls IoActive (0x140013920) for any sensor, which sets S_I2C_CTL (0x43) |= 3,
+  i.e. VSIO and the sensor I2C switch, refcounted. 0004 now adds VSIO as "vsio" supply of the
+  IMX241 and the driver enables it first.

@@ -402,6 +402,12 @@ static struct regulator_consumer_supply int3477_vcm_consumer_supplies[] = {
 
 static struct regulator_consumer_supply int3477_vsio_consumer_supplies[] = {
 	REGULATOR_SUPPLY("dovdd", "i2c-INT3477:00"),
+	/*
+	 * VSIO also switches the sensor I2C/IO path; the Windows control logic
+	 * enables it for the front IMX241 as well, which does not answer on
+	 * I2C without it.
+	 */
+	REGULATOR_SUPPLY("vsio", "i2c-INT347F:00"),
 };
 
 static const struct regulator_init_data hp_x2_612_g2_tps68470_core_reg_init_data = {
