@@ -72,3 +72,9 @@ Consumer device: `i2c-INT3477:00`
   Surface Go (CRD-G) sequence copied in 0001 is likely the wrong model. See
   `docs/windows-ctrllogic-re.md` for the reverse-engineered sequence.
 - The Intel binaries and tuning files are not redistributable and are not part of this repo.
+
+### 2026-10-14, working
+- Turning on the VCM rail (2.8 V) was the missing piece. With it the sensor answers:
+  `Detected OV8858 sensor, revision 0xb2` (R2A, so 4 lanes are supported), `Instantiated dw9714 VCM`,
+  and libcamera registers "Internal back camera" (`\_SB_.PCI0.LNK0`). `cam` and `qcam` stream.
+- Reprobing the PMIC in the same boot fails ("INT3472 seems to have no dependents"); test once per boot.

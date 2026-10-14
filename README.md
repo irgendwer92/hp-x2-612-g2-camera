@@ -3,9 +3,10 @@
 Out-of-tree kernel patches to bring up the **rear 8 MP camera (OmniVision OV8858)**
 of the HP Pro x2 612 G2 tablet on its Intel IPU3, for use through libcamera.
 
-> **Status: experimental, not yet tested on hardware.** The patches build
-> against Linux 7.2.9. Whether the sensor powers up and streams is still unknown.
-> See [Risks](#risks) before loading anything.
+> **Status: working.** With these patches on Linux 7.2.9 the rear camera probes
+> ("Detected OV8858 sensor, revision 0xb2"), libcamera lists it as
+> "Internal back camera", and it streams in `cam` and `qcam`. Image quality is
+> uncalibrated (no IPU3 tuning file yet).
 
 The front camera (ACPI `INT347F`, believed to be a Sony IMX241) has no Linux
 driver and is out of scope.
@@ -73,13 +74,15 @@ going ahead with a half-patched tree.
 
 ## Risks
 
-- **The voltage rail mapping is inferred, not confirmed.** The BIOS leaves the
-  PMIC hint fields empty, so `0001` copies the Surface Go wiring of the same
-  CRD-G reference design: CORE 1.2 V → DVDD, ANA 2.8 V → AVDD, VSIO 1.8 V →
-  DOVDD. If this board is wired differently, a sensor rail could get the wrong
-  voltage.
-- **The reset and power-down GPIOs (9 and 7) are also copied from the Surface
-  Go.** If they're wrong, the sensor just won't respond.
+- **Rail mapping.** The BIOS leaves the PMIC hint fields empty. The rails in
+  `0001` (CORE 1.2 V → DVDD, ANA 2.8 V → AVDD, VSIO 1.8 V → DOVDD, VCM 2.8 V
+  always on) and the reset/enable lines (`s_resetn`/`s_enable`) match what the
+  Windows driver programs for this board, recovered by static analysis in
+  [`docs/windows-ctrllogic-re.md`](docs/windows-ctrllogic-re.md).
+- **The VCM rail must be on** for the sensor to answer on I2C, so `0001` keeps
+  it always on. That costs a little idle power.
+- **Testing with `scripts/test-load.sh` only works once per boot.** The PMIC
+  driver consumes its ACPI dependency list on the first successful probe.
 - **The colour (Bayer) order** was validated on a PinePhone Pro, not this module.
   Colours may come out swapped. The image may also be upside down, which would
   need a DMI quirk in ipu-bridge.
