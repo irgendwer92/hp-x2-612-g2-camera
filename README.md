@@ -6,7 +6,7 @@ of the HP Pro x2 612 G2 tablet on its Intel IPU3, for use through libcamera.
 > **Status: working.** With these patches on Linux 7.2.9 the rear camera probes
 > ("Detected OV8858 sensor, revision 0xb2"), libcamera lists it as
 > "Internal back camera", and it streams in `cam` and `qcam`. Image quality is
-> uncalibrated (no IPU3 tuning file yet).
+> uncalibrated with stock libcamera; see Risks.
 
 The front camera (ACPI `INT347F`, a Sony IMX241 per HP's Windows driver) has no Linux
 driver and is out of scope.
@@ -83,11 +83,11 @@ going ahead with a half-patched tree.
   it always on. That costs a little idle power.
 - **Testing with `scripts/test-load.sh` only works once per boot.** The PMIC
   driver consumes its ACPI dependency list on the first successful probe.
-- **The colour (Bayer) order** was validated on a PinePhone Pro, not this module.
-  Colours may come out swapped. The image may also be upside down, which would
-  need a DMI quirk in ipu-bridge.
-- **There is no IPU3 tuning file** for OV8858, so libcamera falls back to
-  `uncalibrated.yaml` and colours will be rough.
+- **Colour order and orientation** are confirmed correct on this module.
+- **Image quality** with stock libcamera is uncalibrated (strong lens shading).
+  `libcamera/patches/` adds IPU3 lens shading correction and the correct OV8858
+  black level, and `tools/lsc/` calibrates the tables; both are verified on
+  this tablet but only used by a locally built libcamera so far.
 
 ## Upstreaming
 
