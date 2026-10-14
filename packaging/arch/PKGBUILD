@@ -12,7 +12,7 @@
 
 pkgname=hp-x2-612-g2-camera-dkms
 _pkgbase=hp-x2-612-g2-camera
-pkgver=7.2.9
+pkgver=7.2.9.r30.g0d8d941
 pkgrel=1
 pkgdesc="Patched TPS68470/INT3472, ipu-bridge and OV8858 drivers for the HP Pro x2 612 G2 rear camera (DKMS)"
 arch=('x86_64')

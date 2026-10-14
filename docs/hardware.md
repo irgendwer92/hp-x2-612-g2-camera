@@ -139,3 +139,14 @@ Measured on qcam PNG output (gamma-encoded), paper against the lens:
   (SMIA 1.0), pixel order 0x01 (RGGB), data pedestal 0x0040 (64 at 10 bit).
 - Clock: the TPS68470 clock is shared; with the OV8858 holding it at 24 MHz, setting 19.2 MHz fails
   with -EBUSY. The IMX241 answers at 24 MHz.
+
+### 2026-10-14, IMX241 SMIA limits (dump_limits=1)
+Populated: analogue gain codes 0–224, gain = 256/(256 − code) (m0 0, c0 256, m1 −1, c1 256);
+digital gain 0x0100–0x0fff step 1; coarse integration min 1, margin 5; ext clk 6–27 MHz (IEEE754
+floats, SMIA 1.0); pre-PLL div 1–4, PLL input 6–27 MHz, multiplier 16–255, PLL output 384–1000 MHz;
+vt_sys_clk_div 1–2, vt_pix_clk_div 8–20; op_sys_clk_div 1–2, op_pix_clk_div 8–10; frame length
+202–65535 lines, line length 1456–65520 pck, min line blanking 312, min frame blanking 6; pixel array
+0..1935 × 0..1095 (1936 × 1096); output 256×192 to 1952×1096; even inc 1, odd inc 1–15; no scaler.
+**Zero (missing):** min/max vt_sys_clk_freq, vt_pix_clk_freq (0x1124–0x1133) and op_sys_clk_freq,
+op_pix_clk_freq (0x1164–0x116b). The ccs driver's PLL calculator needs these, so ccs would need a
+static data (limits override) file. Data format descriptors at 0x0040 and 0x00c0 are populated.
