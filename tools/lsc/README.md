@@ -67,6 +67,10 @@ All commands run from the repo root.
    flicker (daylight from a window, or a high-CRI LED panel). Defocus it a
    little, or hold it close, so no texture shows. Write down the colour
    temperature of the light, for example about 5000 K for overcast daylight.
+   **Don't use direct sun.** Paper against the lens pointed at the sun clipped
+   the centre of the frame on the HP Pro x2 612 G2 (auto-exposure targets the
+   mean, and this lens vignettes heavily). Bright sky, or a sunlit wall,
+   through the paper works. If `calibrate.py` reports clipping, use less light.
 
 2. **Stop PipeWire.** `cam` needs exclusive access to the camera.
    ```sh

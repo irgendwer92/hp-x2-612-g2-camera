@@ -81,31 +81,40 @@ fi
 
 mkdir -p "$OUT"
 LOG="$OUT/cam.log"
-TOTAL=$((SKIP + KEEP))
+TOTAL=$((SKIP + 1))   # frames per cam run: settle, then keep the last
 
-echo "Capturing $TOTAL frames (keeping the last $KEEP) to $OUT ..."
+echo "Capturing $KEEP raw frame(s) to $OUT (one cam run each, $TOTAL frames per run) ..."
+# libcamera 0.7.2's IPU3 raw stream reports sequence 0 for every buffer, so
+# cam's '#' file name substitution makes all raw frames of one run overwrite
+# each other; only the last (settled) frame survives. Run cam once per kept
+# frame instead and renumber.
 # -I prints the validated stream configuration (verifies stream1 is raw),
 # --metadata prints ExposureTime/AnalogueGain/ColourTemperature per request.
-"$CAM" -c "$CAMERA" -I \
-	-s role=viewfinder -s role=raw \
-	-C"$TOTAL" --metadata \
-	-F"$OUT/frame-#.bin" 2>&1 | tee "$LOG" | grep -E '^[0-9]+: |error|fail|invalid' || true
-
-# Viewfinder frames are not needed.
-rm -f "$OUT"/frame-cam0-stream0-*.bin
+: > "$LOG"
+rm -f "$OUT"/frame-cam0-stream1-*.bin
+tmp=$OUT/.run
+for ((n = 0; n < KEEP; n++)); do
+	rm -rf "$tmp" && mkdir -p "$tmp"
+	"$CAM" -c "$CAMERA" -I \
+		-s role=viewfinder -s role=raw \
+		-C"$TOTAL" --metadata \
+		-F"$tmp/frame-#.bin" >> "$LOG" 2>&1 || true
+	raw=$(ls "$tmp"/frame-cam0-stream1-*.bin 2>/dev/null | tail -1)
+	[ -n "$raw" ] && mv "$raw" "$(printf '%s/frame-cam0-stream1-%06d.bin' "$OUT" "$n")"
+	printf '  run %d/%d done\n' $((n + 1)) "$KEEP"
+done
+rm -rf "$tmp"
+grep -m1 -E '^1: ' "$LOG" || true
 
 if ! grep -qE '^1: 3264x2448-SBGGR10_IPU3' "$LOG"; then
 	echo "warning: stream1 is not 3264x2448-SBGGR10_IPU3, check $LOG;" \
 	     "pass --width/--height/--bayer-order to calibrate.py accordingly" >&2
 fi
 
-mapfile -t raws < <(ls "$OUT"/frame-cam0-stream1-*.bin 2>/dev/null | sort)
-if [ "${#raws[@]}" -eq 0 ]; then
+if ! ls "$OUT"/frame-cam0-stream1-*.bin >/dev/null 2>&1; then
 	echo "error: no raw frames captured, see $LOG" >&2
 	exit 1
 fi
-ndrop=$(( ${#raws[@]} > KEEP ? ${#raws[@]} - KEEP : 0 ))
-for ((i = 0; i < ndrop; i++)); do rm -f "${raws[$i]}"; done
 
 kept=$(ls "$OUT"/frame-cam0-stream1-*.bin | wc -l)
 size=$(stat -c %s "$(ls "$OUT"/frame-cam0-stream1-*.bin | head -1)")
