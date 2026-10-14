@@ -88,3 +88,13 @@ Consumer device: `i2c-INT3477:00`
   an IPU3 shading algorithm in libcamera, not just an `ov8858.yaml`.
 - The module EEPROM (0x50–0x53) likely holds factory OTP calibration (the Windows ov8858.sys has
   NVM-read routines); a possible source for per-module shading/AWB data.
+
+## Roadmap (agreed 2026-10-14)
+1. Lens shading correction: libcamera IPU3 `Lsc` algorithm + flat-field calibration tool (in progress).
+   Flat-field method: white paper held against the lens, pointed at bright even light; raw capture.
+2. Front camera (IMX241, `INT347F`, module FN50FF-562H, I2C3 0x37, CSI port 1, 2 lanes):
+   first a cheap probe: power it with the recovered Windows sequence (VAUX1 core, VAUX2 I/O,
+   GPIO4 analog enable, GPIO3, GPIO5/6 reset/powerdown; see windows-ctrllogic-re.md) and read
+   registers 0x0000–0x0010 to see whether it is MIPI CCS/SMIA++ compliant (→ generic `ccs` driver)
+   or needs a new driver. Watch for the shared TPS68470 clock (ov8858 runs at 24 MHz).
+3. Publishing: real Signed-off-by, git remote, upstream submissions.
