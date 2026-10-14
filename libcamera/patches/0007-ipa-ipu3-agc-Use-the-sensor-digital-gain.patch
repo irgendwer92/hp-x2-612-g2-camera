@@ -1,7 +1,7 @@
 From 233f5812c5de4ac42ca964e080c8afa3e31b7ed6 Mon Sep 17 00:00:00 2001
 From: irgend wer <irgend@wer.de>
 Date: Wed, 14 Oct 2026 21:39:21 +0200
-Subject: [PATCH 7/7] ipa: ipu3: agc: Use the sensor digital gain
+Subject: [PATCH 7/8] ipa: ipu3: agc: Use the sensor digital gain
 
 The IPU3 AGC only drives exposure time and analogue gain, and discards
 the digital gain computed by AgcMeanLuminance. Sensors with little

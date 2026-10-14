@@ -1,7 +1,7 @@
 From 8392658ab1e7790cb7d5288e706a3104ed4ad293 Mon Sep 17 00:00:00 2001
 From: irgend wer <irgend@wer.de>
 Date: Wed, 14 Oct 2026 17:15:14 +0200
-Subject: [PATCH 3/7] ipa: libipa: camera_sensor_helper: Add OV8858 black level
+Subject: [PATCH 3/8] ipa: libipa: camera_sensor_helper: Add OV8858 black level
 
 The ov8858 kernel driver programs the sensor's BLC target register
 (0x4005) to 0x10, so the black level is 16 at 10 bits. A measurement

@@ -1,0 +1,56 @@
+From 81deff341dbdd8090875d43e9538264e1d8d61ba Mon Sep 17 00:00:00 2001
+From: irgend wer <irgend@wer.de>
+Date: Wed, 14 Oct 2026 21:43:08 +0200
+Subject: [PATCH 8/8] ipa: ipu3: Add IMX241 tuning file
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The IMX241 front camera of the HP Pro x2 612 G2 has small 1.12 µm
+pixels and looks dim at the default AGC target. Raise the relative
+luminance target to 0.24; with the sensor digital gain the AGC still
+reaches it at 30 fps in typical indoor light.
+
+Signed-off-by: TODO <TODO>
+---
+ src/ipa/ipu3/data/imx241.yaml | 15 +++++++++++++++
+ src/ipa/ipu3/data/meson.build |  1 +
+ 2 files changed, 16 insertions(+)
+ create mode 100644 src/ipa/ipu3/data/imx241.yaml
+
+diff --git a/src/ipa/ipu3/data/imx241.yaml b/src/ipa/ipu3/data/imx241.yaml
+new file mode 100644
+index 000000000..2d289cba2
+--- /dev/null
++++ b/src/ipa/ipu3/data/imx241.yaml
+@@ -0,0 +1,15 @@
++# SPDX-License-Identifier: CC0-1.0
++%YAML 1.1
++---
++version: 1
++algorithms:
++  - Af:
++  - Agc:
++      # The IMX241 (1.12 µm pixels) is a dim front-facing sensor; aim a
++      # little brighter than the default 0.16. The AGC reaches this at
++      # 30 fps with the sensor digital gain.
++      relativeLuminanceTarget: 0.24
++  - Awb:
++  - BlackLevelCorrection:
++  - ToneMapping:
++...
+diff --git a/src/ipa/ipu3/data/meson.build b/src/ipa/ipu3/data/meson.build
+index c456a7f08..eaeb7aa73 100644
+--- a/src/ipa/ipu3/data/meson.build
++++ b/src/ipa/ipu3/data/meson.build
+@@ -1,6 +1,7 @@
+ # SPDX-License-Identifier: CC0-1.0
+ 
+ conf_files = files([
++    'imx241.yaml',
+     'ov8858.yaml',
+     'uncalibrated.yaml',
+ ])
+-- 
+2.56.0
+
