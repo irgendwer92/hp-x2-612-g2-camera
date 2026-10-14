@@ -1,14 +1,10 @@
 From: TODO <TODO>
 Subject: [PATCH] media: ipu-bridge: Add Sony IMX241 (INT347F) to supported sensors
 
-Not for upstream yet, and NOT applied by scripts/prepare.sh (it lives in
-patches/pending/) until the imx241 driver (0006) is confirmed on
-hardware: ipu3-cio2 creates its media links and subdev nodes only once
-every sensor in the fwnode graph has bound (cio2_notifier_complete()),
-so listing INT347F while its driver does not bind would take the
-working rear OV8858 camera down with it. scripts/front-test.sh builds a
-test copy of ipu-bridge with this patch. Move it to patches/ once the
-front camera works.
+Note: ipu3-cio2 creates its media links and subdev nodes only once every
+sensor in the fwnode graph has bound (cio2_notifier_complete()), so this
+entry must only be added together with a working IMX241 driver; with
+the imx241 driver (0006) both cameras work on the HP Pro x2 612 G2.
 
 The Sony IMX241 is found with ACPI HID INT347F on IPU3 based devices
 such as the HP Pro x2 612 G2, where it is the front camera on CSI-2

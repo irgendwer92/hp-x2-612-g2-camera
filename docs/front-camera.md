@@ -1,5 +1,11 @@
 # Front camera: Sony IMX241 driver
 
+> **Status (2026-10-14):** working. 0005 has moved from `patches/pending/` to
+> `patches/`; both cameras come up on a normal boot with the DKMS package. The
+> missing piece in the first test boot was the PMIC VSIO rail, now a `vsio`
+> supply of the IMX241 (see docs/hardware.md). The test-boot tooling below is
+> kept for debugging; references to `pending/` describe the bring-up history.
+
 Status: **written, builds without warnings, not yet tested on hardware.**
 
 | | |

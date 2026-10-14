@@ -2,7 +2,7 @@
 # Front camera (IMX241, ACPI INT347F) test without touching the normal setup.
 #
 #   scripts/front-test.sh [build]     as user: build build/front/ipu-bridge.ko
-#                                     (patches/*.patch + patches/pending/0005)
+#                                     (patches/*.patch, including 0005)
 #                                     and build/front/imx241.ko
 #   sudo scripts/front-test.sh arm    stage both modules and install modprobe.d
 #                                     rules that use them ONLY in a boot whose
@@ -54,7 +54,7 @@ do_build() {
 	tag=$("$here/prepare.sh" --tag "$kver")
 	mkdir -p "$front/patches"
 	rm -f "$front"/patches/*.patch
-	for p in "$repo"/patches/*.patch "$repo"/patches/pending/0005-*.patch; do
+	for p in "$repo"/patches/*.patch; do
 		[ -e "$p" ] || die "missing patch $p"
 		ln -s "$p" "$front/patches/$(basename "$p")"
 	done

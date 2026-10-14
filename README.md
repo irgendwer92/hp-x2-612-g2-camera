@@ -10,10 +10,8 @@ of the HP Pro x2 612 G2 tablet on its Intel IPU3, for use through libcamera.
 
 The front camera (ACPI `INT347F`, Sony IMX241) has a new driver (`0006`). It
 streams in a test boot at 2592x1944 and 1296x972, and shows a live image in
-qcam with the patched libcamera; mirror orientation is still to be confirmed. See
+qcam with the patched libcamera; orientation is correct (unmirrored). See
 [`docs/front-camera.md`](docs/front-camera.md).
-Its ipu-bridge entry stays in `patches/pending/` until it works, because listing
-it without a bound driver would also take down the rear camera.
 
 ## Why it doesn't work upstream
 
@@ -35,7 +33,7 @@ The IPU3 camera on this tablet needs three things that mainline Linux is missing
 | `0003` | ov8858: ACPI match, defer until the fwnode graph exists, request 24 MHz xvclk |
 | `0004` | int3472/tps68470: front camera (IMX241) supplies and GPIOs |
 | `0006` | new `imx241` sensor driver (front camera), streams at 2592x1944 and 1296x972 |
-| `pending/0005` | ipu-bridge: add IMX241 (`INT347F`, 498 MHz link); applied only by `scripts/front-test.sh` |
+| `0005` | ipu-bridge: add IMX241 (`INT347F`, 498 MHz link) |
 
 The hardware facts behind these patches, read from ACPI at runtime, are in
 [`docs/hardware.md`](docs/hardware.md).
