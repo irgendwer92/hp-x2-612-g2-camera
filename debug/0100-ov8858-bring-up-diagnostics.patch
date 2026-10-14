@@ -1,8 +1,9 @@
-Not for upstream: bring-up diagnostics for ov8858 (dbg_settle_ms, dbg_hold_s).
+Not for upstream: bring-up diagnostics for ov8858 (dbg_settle_ms, dbg_hold_s,
+dbg_reset_raw/dbg_pwdn_raw to drive the reset/powerdown lines during a hold).
 
---- a/drivers/media/i2c/ov8858.c	2026-10-14 15:19:33.556929089 +0200
-+++ b/drivers/media/i2c/ov8858.c	2026-10-14 15:19:33.616737263 +0200
-@@ -45,6 +45,14 @@
+--- a/drivers/media/i2c/ov8858.c
++++ b/drivers/media/i2c/ov8858.c
+@@ -45,6 +45,15 @@
  #define OV8858_REG_CHIP_ID		OV8858_REG_24BIT(0x300a)
  #define OV8858_CHIP_ID			0x008858
  
@@ -13,11 +14,56 @@ Not for upstream: bring-up diagnostics for ov8858 (dbg_settle_ms, dbg_hold_s).
 +static unsigned int dbg_hold_s;
 +module_param(dbg_hold_s, uint, 0644);
 +MODULE_PARM_DESC(dbg_hold_s, "keep the sensor powered this long after a failed ID read (s)");
++static struct ov8858 *dbg_ov8858;	/* set only while holding power */
 +
  #define OV8858_REG_SUB_ID		OV8858_REG_8BIT(0x302a)
  #define OV8858_R1A			0xb0
  #define OV8858_R2A			0xb2
-@@ -1633,6 +1641,11 @@
+@@ -1610,6 +1619,43 @@
+  * Power Management
+  */
+ 
++/*
++ * Writing 0/1 to dbg_reset_raw / dbg_pwdn_raw during a dbg_hold_s hold sets the
++ * physical level of the reset / powerdown GPIO, to test the line polarity.
++ */
++static int dbg_set_raw(const char *val, struct gpio_desc *(*pick)(struct ov8858 *))
++{
++	struct ov8858 *ov8858 = READ_ONCE(dbg_ov8858);
++	unsigned int v;
++	int ret;
++
++	ret = kstrtouint(val, 0, &v);
++	if (ret)
++		return ret;
++	if (!ov8858 || !pick(ov8858))
++		return -ENODEV;
++	gpiod_set_raw_value_cansleep(pick(ov8858), !!v);
++	return 0;
++}
++
++static struct gpio_desc *dbg_pick_reset(struct ov8858 *o) { return o->reset_gpio; }
++static struct gpio_desc *dbg_pick_pwdn(struct ov8858 *o) { return o->pwdn_gpio; }
++
++static int dbg_reset_set(const char *val, const struct kernel_param *kp)
++{
++	return dbg_set_raw(val, dbg_pick_reset);
++}
++
++static int dbg_pwdn_set(const char *val, const struct kernel_param *kp)
++{
++	return dbg_set_raw(val, dbg_pick_pwdn);
++}
++
++static const struct kernel_param_ops dbg_reset_ops = { .set = dbg_reset_set };
++static const struct kernel_param_ops dbg_pwdn_ops = { .set = dbg_pwdn_set };
++module_param_cb(dbg_reset_raw, &dbg_reset_ops, NULL, 0200);
++module_param_cb(dbg_pwdn_raw, &dbg_pwdn_ops, NULL, 0200);
++
+ static int ov8858_power_on(struct ov8858 *ov8858)
+ {
+ 	struct i2c_client *client = v4l2_get_subdevdata(&ov8858->subdev);
+@@ -1633,6 +1679,11 @@
  		goto disable_clk;
  	}
  
@@ -29,7 +75,7 @@ Not for upstream: bring-up diagnostics for ov8858 (dbg_settle_ms, dbg_hold_s).
  	/*
  	 * The chip manual only suggests 8192 cycles prior to first SCCB
  	 * transaction, but a double sleep between the release of gpios
-@@ -1644,6 +1657,11 @@
+@@ -1644,6 +1695,11 @@
  	fsleep(delay_us);
  	gpiod_set_value_cansleep(ov8858->pwdn_gpio, 0);
  	fsleep(delay_us);
@@ -41,14 +87,19 @@ Not for upstream: bring-up diagnostics for ov8858 (dbg_settle_ms, dbg_hold_s).
  
  	return 0;
  
-@@ -1950,6 +1968,11 @@
+@@ -1950,6 +2006,16 @@
  	pm_runtime_enable(dev);
  
  	ret = ov8858_check_sensor_id(ov8858);
 +	if (ret && dbg_hold_s) {
 +		dev_info(dev, "dbg: ID read failed, holding power for %u s\n",
 +			 dbg_hold_s);
++		WRITE_ONCE(dbg_ov8858, ov8858);
 +		msleep(dbg_hold_s * 1000);
++		WRITE_ONCE(dbg_ov8858, NULL);
++		/* restore the normal released state before powering off */
++		gpiod_set_value_cansleep(ov8858->reset_gpio, 0);
++		gpiod_set_value_cansleep(ov8858->pwdn_gpio, 0);
 +	}
  	if (ret)
  		goto err_power_off;
