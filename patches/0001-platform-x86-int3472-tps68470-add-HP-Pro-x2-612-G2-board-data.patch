@@ -29,11 +29,14 @@ sensor NACKs while the module EEPROM (0x50) answers. Enable the
 daisy-chain property so that GPIO1/GPIO2 are kept as inputs, as is done
 for the MSI Prestige AI Evo and Intel NVL boards.
 
-Signed-off-by: TODO <TODO>
----
+The OV8858 only answers on I2C when the VCM rail is enabled too; the
+Windows driver for this CRD-G2 board (CLDB CRD version 0x50) always turns
+VCM on together with the sensor rails, so mark it always-on.
+
+Signed-off-by: TODO <TODO>---
 --- a/drivers/platform/x86/intel/int3472/tps68470_board_data.c
 +++ b/drivers/platform/x86/intel/int3472/tps68470_board_data.c
-@@ -369,6 +369,104 @@
+@@ -369,6 +369,111 @@
  	},
  };
  
@@ -42,7 +45,8 @@ Signed-off-by: TODO <TODO>
 + *
 + * The PMIC uses the Intel CRD-G reference design (_DDN "PMIC-CRDG") like the
 + * Surface Go and the BIOS provides no rail mapping (C0Px/C0Gx are all 0), so
-+ * follow the Surface Go wiring of the CRD-G for the OV8858 rails:
++ * use the same rail assignment as the Surface Go for the OV8858 (this matches
++ * the CRD-G2 sequence of the Windows driver for this module):
 + *   CORE 1.2 V -> DVDD, ANA 2.8 V -> AVDD, VSIO 1.8 V -> DOVDD,
 + *   VCM 2.8 V -> VCM supply.
 + * VIO is kept always-on at the same voltage as VSIO; AUX1/AUX2 are left
@@ -93,11 +97,17 @@ Signed-off-by: TODO <TODO>
 +	.consumer_supplies = int3477_ana_consumer_supplies,
 +};
 +
++/*
++ * The OV8858 does not answer on I2C unless the VCM rail is on as well. The
++ * Windows driver always enables VCM together with the sensor rails on this
++ * CRD-G2 design, so keep it on.
++ */
 +static const struct regulator_init_data hp_x2_612_g2_tps68470_vcm_reg_init_data = {
 +	.constraints = {
 +		.min_uV = 2815200,
 +		.max_uV = 2815200,
 +		.apply_uV = true,
++		.always_on = true,
 +		.valid_ops_mask = REGULATOR_CHANGE_STATUS,
 +	},
 +	.num_consumer_supplies = ARRAY_SIZE(int3477_vcm_consumer_supplies),
@@ -138,7 +148,7 @@ Signed-off-by: TODO <TODO>
  static struct gpiod_lookup_table surface_go_int347a_gpios = {
  	.dev_id = "i2c-INT347A:00",
  	.table = {
-@@ -411,6 +509,15 @@
+@@ -411,6 +516,15 @@
  	}
  };
  
@@ -154,7 +164,7 @@ Signed-off-by: TODO <TODO>
  static const struct property_entry int3472_tps68470_daisy_chain_gpio_props[] = {
  	PROPERTY_ENTRY_BOOL("daisy-chain-enable"),
  	{ }
-@@ -469,6 +576,16 @@
+@@ -469,6 +583,16 @@
  	},
  };
  
@@ -171,7 +181,7 @@ Signed-off-by: TODO <TODO>
  static const struct dmi_system_id int3472_tps68470_board_data_table[] = {
  	{
  		.matches = {
-@@ -529,6 +646,13 @@
+@@ -529,6 +653,13 @@
  		},
  		.driver_data = (void *)&intel_nvl_tps68470_board_data,
  	},

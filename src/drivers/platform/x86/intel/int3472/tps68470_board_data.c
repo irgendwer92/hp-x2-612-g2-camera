@@ -374,7 +374,8 @@ static const struct tps68470_regulator_platform_data intel_nvl_tps68470_pdata = 
  *
  * The PMIC uses the Intel CRD-G reference design (_DDN "PMIC-CRDG") like the
  * Surface Go and the BIOS provides no rail mapping (C0Px/C0Gx are all 0), so
- * follow the Surface Go wiring of the CRD-G for the OV8858 rails:
+ * use the same rail assignment as the Surface Go for the OV8858 (this matches
+ * the CRD-G2 sequence of the Windows driver for this module):
  *   CORE 1.2 V -> DVDD, ANA 2.8 V -> AVDD, VSIO 1.8 V -> DOVDD,
  *   VCM 2.8 V -> VCM supply.
  * VIO is kept always-on at the same voltage as VSIO; AUX1/AUX2 are left
@@ -425,11 +426,17 @@ static const struct regulator_init_data hp_x2_612_g2_tps68470_ana_reg_init_data 
 	.consumer_supplies = int3477_ana_consumer_supplies,
 };
 
+/*
+ * The OV8858 does not answer on I2C unless the VCM rail is on as well. The
+ * Windows driver always enables VCM together with the sensor rails on this
+ * CRD-G2 design, so keep it on.
+ */
 static const struct regulator_init_data hp_x2_612_g2_tps68470_vcm_reg_init_data = {
 	.constraints = {
 		.min_uV = 2815200,
 		.max_uV = 2815200,
 		.apply_uV = true,
+		.always_on = true,
 		.valid_ops_mask = REGULATOR_CHANGE_STATUS,
 	},
 	.num_consumer_supplies = ARRAY_SIZE(int3477_vcm_consumer_supplies),
