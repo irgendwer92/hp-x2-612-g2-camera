@@ -23,7 +23,8 @@ Platform: Skylake, Intel IPU3 (CIO2 PCI 0000:00:14.3, ImgU 0000:00:05.0).
 ## Interface contract between the patches
 Consumer device: `i2c-INT3477:00`
 - Regulators (TPS68470): `avdd` 2.8 V (ANA), `dovdd` 1.8 V (VSIO / VIO), `dvdd` 1.2 V (CORE);
-  VCM rail `vdd` for `i2c-INT3477:00-VCM` 2.8 V (VCM regulator).
+  VCM rail `vcc` (dw9714, VCM type 2) + `vdd` for `i2c-INT3477:00-VCM`, 2.8 V (VCM regulator).
+- Rail mapping copies the Surface Go CRD-G wiring; NOT confirmed for this board (no schematic, BIOS hints empty).
 - GPIOs (tps68470-gpio, guessed from CRD-G / Surface Go): 9 = `reset` (active low), 7 = `powerdown` (active low)
-- Clock: `xvclk` from tps68470 clk, consumer `i2c-INT3477:00`. Driver modes assume 24 MHz.
+- Clock: `xvclk` — consumers are named automatically by tps68470.c from the PMIC ACPI dependents; no board data needed. Driver modes assume 24 MHz.
 - ipu-bridge: `IPU_SENSOR_CONFIG("INT3477", 1, 360000000)` (OV8858_LINK_FREQ).
