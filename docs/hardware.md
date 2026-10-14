@@ -189,5 +189,5 @@ MCLK with a 2592×1944 readout (5 MP; the SMIA limit registers' 1936×1096 array
   so the IMX241 analogue gain works as 256/(256 − code)); the sensor is simply insensitive.
 - libcamera patch 0007: the IPU3 AGC now uses the sensor digital gain (V4L2_CID_DIGITAL_GAIN,
   default value = unity) up to 4x, keeping 30 fps (user requirement). The AGC settles at about
-  1.5x digital gain in that room. libcamera 0008 raises the IMX241 AGC target to 0.36 (default
-  0.16): about 3.2x digital gain at 30 fps in the same room.
+  1.5x digital gain in that room. libcamera 0008 raises the IMX241 AGC target to 0.32 (default
+  0.16; user choice): measured 2.07x digital gain at 0.24 and 3.24x at 0.36, so about 2.8x at 0.32.
