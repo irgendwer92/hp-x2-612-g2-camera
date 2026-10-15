@@ -140,9 +140,6 @@ static const struct imx241_clk_cfg imx241_clk_cfgs[] = {
 	},
 };
 
-/* The rate to request when the clock runs at none of the above */
-#define IMX241_DEFAULT_EXT_CLK		24000000U
-
 static u64 imx241_pixel_rate(const struct imx241_clk_cfg *cfg)
 {
 	/* link_freq * 2 (DDR) * 2 lanes / 10 bits per pixel */
@@ -955,14 +952,18 @@ out:
 }
 
 /*
- * Use the external clock at its current rate if a PLL configuration exists
- * for it: the clock may be shared with another sensor, so its rate is not
- * changed unless it is unusable.
+ * Pick the PLL configuration whose link frequency the firmware lists. The
+ * external clock may be shared with another sensor: keep its current rate if
+ * that already matches, otherwise try to set the listed configuration's rate.
+ * Only if the rate can't be changed fall back to any configuration for the
+ * current rate.
  */
-static int imx241_get_clock(struct device *dev, struct imx241 *imx241)
+static int imx241_get_clock(struct device *dev, struct imx241 *imx241,
+			    unsigned long link_freq_bitmap)
 {
+	const struct imx241_clk_cfg *cfg;
 	unsigned long rate;
-	int ret;
+	unsigned int i;
 
 	/*
 	 * devm_v4l2_sensor_clk_get() would set a provided clock to the
@@ -982,22 +983,38 @@ static int imx241_get_clock(struct device *dev, struct imx241 *imx241)
 	}
 
 	rate = clk_get_rate(imx241->xclk);
-	imx241->clk_cfg = imx241_find_clk_cfg(rate);
-	if (imx241->clk_cfg)
+	cfg = imx241_find_clk_cfg(rate);
+	if (cfg && (link_freq_bitmap & BIT(cfg->link_freq_index))) {
+		imx241->clk_cfg = cfg;
 		return 0;
+	}
 
-	ret = clk_set_rate(imx241->xclk, IMX241_DEFAULT_EXT_CLK);
-	if (ret)
-		return dev_err_probe(dev, ret,
-				     "clock rate %lu Hz not supported, and setting %u Hz failed\n",
-				     rate, IMX241_DEFAULT_EXT_CLK);
+	for (i = 0; i < ARRAY_SIZE(imx241_clk_cfgs); i++) {
+		const struct imx241_clk_cfg *try = &imx241_clk_cfgs[i];
 
+		if (!(link_freq_bitmap & BIT(try->link_freq_index)))
+			continue;
+
+		if (clk_set_rate(imx241->xclk, try->ext_clk) ||
+		    clk_get_rate(imx241->xclk) != try->ext_clk)
+			continue;
+
+		imx241->clk_cfg = try;
+		return 0;
+	}
+
+	/* The clock can't be changed: use its current rate if supported. */
 	rate = clk_get_rate(imx241->xclk);
-	imx241->clk_cfg = imx241_find_clk_cfg(rate);
-	if (!imx241->clk_cfg)
+	cfg = imx241_find_clk_cfg(rate);
+	if (!cfg)
 		return dev_err_probe(dev, -EINVAL,
 				     "clock rate %lu Hz not supported (need 24 or 19.2 MHz)\n",
 				     rate);
+
+	dev_warn(dev,
+		 "link frequency %lld Hz for the %lu Hz clock not listed by firmware\n",
+		 imx241_link_freq_menu[cfg->link_freq_index], cfg->ext_clk);
+	imx241->clk_cfg = cfg;
 
 	return 0;
 }
@@ -1110,19 +1127,9 @@ static int imx241_probe(struct i2c_client *client)
 		return dev_err_probe(dev, PTR_ERR(imx241->regmap),
 				     "failed to initialize CCI\n");
 
-	ret = imx241_get_clock(dev, imx241);
+	ret = imx241_get_clock(dev, imx241, link_freq_bitmap);
 	if (ret)
 		return ret;
-
-	/*
-	 * The link frequency follows the external clock rate. Firmware is
-	 * expected to list the one for the clock it provides.
-	 */
-	if (!(link_freq_bitmap & BIT(imx241->clk_cfg->link_freq_index)))
-		dev_warn(dev,
-			 "link frequency %lld Hz for the %lu Hz clock not listed by firmware\n",
-			 imx241_link_freq_menu[imx241->clk_cfg->link_freq_index],
-			 imx241->clk_cfg->ext_clk);
 
 	ret = imx241_get_power_resources(dev, imx241);
 	if (ret)
