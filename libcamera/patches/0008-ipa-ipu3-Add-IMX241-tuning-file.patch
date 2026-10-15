@@ -1,31 +1,31 @@
-From 7300ac18f26ae2dba07b003b83854c8a23b5d001 Mon Sep 17 00:00:00 2001
+From 93a0b29bfb57f2c03063e1922c6bb216e243b8de Mon Sep 17 00:00:00 2001
 From: Richard Fritz <gh@chaos4all.de>
 Date: Wed, 14 Oct 2026 22:37:09 +0200
 Subject: [PATCH 8/8] ipa: ipu3: Add IMX241 tuning file
-MIME-Version: 1.0
-Content-Type: text/plain; charset=UTF-8
-Content-Transfer-Encoding: 8bit
 
-The IMX241 front camera of the HP Pro x2 612 G2 has small 1.12 µm
-pixels and looks dim at the default AGC target. Raise the relative
-luminance target to 0.32; with the sensor digital gain the AGC reaches
-it at 30 fps in evening indoor light (about 2.8x digital gain, between
-the measured 2.07x at 0.24 and 3.24x at 0.36).
+The IMX241 front camera of the HP Pro x2 612 G2 is not very sensitive,
+and its image looks dim at the default AGC target of 0.16. Add a tuning
+file that raises the relative luminance target to 0.32.
 
-Assisted-by: Claude Opus 5.5
+With the sensor digital gain, the AGC keeps 30 fps in evening indoor
+light. Measurements at targets of 0.24 and 0.36 settled at 2.07x and
+3.24x digital gain respectively, so about 2.8x is expected at 0.32,
+within the 4x limit.
+
+Assisted-by: Claude:claude-opus-5-5
 Signed-off-by: Richard Fritz <gh@chaos4all.de>
 ---
- src/ipa/ipu3/data/imx241.yaml | 15 +++++++++++++++
+ src/ipa/ipu3/data/imx241.yaml | 13 +++++++++++++
  src/ipa/ipu3/data/meson.build |  1 +
- 2 files changed, 16 insertions(+)
+ 2 files changed, 14 insertions(+)
  create mode 100644 src/ipa/ipu3/data/imx241.yaml
 
 diff --git a/src/ipa/ipu3/data/imx241.yaml b/src/ipa/ipu3/data/imx241.yaml
 new file mode 100644
-index 000000000..dbd06cffb
+index 000000000..b38a0b11a
 --- /dev/null
 +++ b/src/ipa/ipu3/data/imx241.yaml
-@@ -0,0 +1,15 @@
+@@ -0,0 +1,13 @@
 +# SPDX-License-Identifier: CC0-1.0
 +%YAML 1.1
 +---
@@ -33,9 +33,7 @@ index 000000000..dbd06cffb
 +algorithms:
 +  - Af:
 +  - Agc:
-+      # The IMX241 (1.12 µm pixels) is a dim front-facing sensor; aim
-+      # brighter than the default 0.16. In evening indoor light the AGC
-+      # reaches this at 30 fps with the sensor digital gain.
++      # The image looks dim at the default target of 0.16.
 +      relativeLuminanceTarget: 0.32
 +  - Awb:
 +  - BlackLevelCorrection:

@@ -1,19 +1,19 @@
-From 1686efa067a96746021c2373761752f3faf0dcd8 Mon Sep 17 00:00:00 2001
+From cf3f53eaaf1e97e8792e8a7a95c94c7244cdffb1 Mon Sep 17 00:00:00 2001
 From: Richard Fritz <gh@chaos4all.de>
 Date: Wed, 14 Oct 2026 22:37:09 +0200
 Subject: [PATCH 6/8] libcamera: camera_sensor_properties: Add IMX241
 
-Add static properties for the Sony IMX241. The sensor is a type 1/5
-(3.63 mm diagonal) back-illuminated CMOS sensor with 2592x1944 active
-pixels of 1.12 um. The pixel size is taken from a distributor's
-specification (FRAMOS), not from a Sony datasheet.
+Add static properties for the Sony IMX241, a 2592x1944 sensor. No Sony
+datasheet is publicly available. The 1.12 um unit cell size is taken
+from a distributor's product listing (FRAMOS) and hasn't been verified
+otherwise.
 
-The test pattern menu of the imx241 kernel driver follows the SMIA
-test_pattern_mode register (0x0600): solid colour, colour bars, fade to
-grey colour bars and PN9. The sensor delays are not known yet; the
-defaults apply.
+The test pattern menu of the imx241 kernel driver (not upstream yet)
+follows the SMIA test_pattern_mode register (0x0600): solid colour,
+colour bars, fade to grey colour bars and PN9. The sensor delays are not
+known yet, so the defaults apply.
 
-Assisted-by: Claude Opus 5.5
+Assisted-by: Claude:claude-opus-5-5
 Signed-off-by: Richard Fritz <gh@chaos4all.de>
 ---
  src/libcamera/sensor/camera_sensor_properties.cpp | 11 +++++++++++

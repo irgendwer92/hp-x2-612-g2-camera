@@ -1,4 +1,4 @@
-From de657dfc5d7cb6447727eb3c6988d37c8cf2748a Mon Sep 17 00:00:00 2001
+From cdf79bba4a758ac81782057fa2f7d46831364736 Mon Sep 17 00:00:00 2001
 From: Richard Fritz <gh@chaos4all.de>
 Date: Wed, 14 Oct 2026 22:37:09 +0200
 Subject: [PATCH 7/8] ipa: ipu3: agc: Use the sensor digital gain
@@ -10,21 +10,28 @@ of the HP Pro x2 612 G2 sits at 33 ms and 8x analogue gain in an
 evening-lit room, well below the AGC target.
 
 When the sensor exposes V4L2_CID_DIGITAL_GAIN, apply the remaining gain
-there, limited to 4x to bound the noise, treating the control's default
-value as unity. Account for it in the effective exposure fed back to the
-AGC, report it in the DigitalGain metadata, and let the pipeline handler
+there, limited to 4x to bound the noise. V4L2 doesn't define the scale
+of the control, so assume that its default value is unity gain, which
+holds for the IMX241 (SMIA, 0x100) and for most sensor drivers. Account
+for the digital gain in the effective exposure fed back to the AGC,
+report it in the DigitalGain metadata, and let the pipeline handler
 delay it like the analogue gain. The frame rate is not changed.
 
-On the IMX241 the AGC now settles at about 1.5x digital gain at 30 fps.
+This affects all sensors that expose V4L2_CID_DIGITAL_GAIN, but only
+once the exposure time and analogue gain have reached their limits.
 
-Assisted-by: Claude Opus 5.5
+On the IMX241 the AGC now settles at about 1.5x digital gain at 30 fps
+in the same room.
+
+Assisted-by: Claude:claude-opus-5-5
 Signed-off-by: Richard Fritz <gh@chaos4all.de>
 ---
- src/ipa/ipu3/algorithms/agc.cpp      | 12 +++++++++-
- src/ipa/ipu3/ipa_context.h           |  4 ++++
- src/ipa/ipu3/ipu3.cpp                | 36 ++++++++++++++++++++++++++++
+ src/ipa/ipu3/algorithms/agc.cpp      | 12 ++++++++-
+ src/ipa/ipu3/ipa_context.cpp         | 16 +++++++++++
+ src/ipa/ipu3/ipa_context.h           |  4 +++
+ src/ipa/ipu3/ipu3.cpp                | 40 ++++++++++++++++++++++++++++
  src/libcamera/pipeline/ipu3/ipu3.cpp |  3 +++
- 4 files changed, 54 insertions(+), 1 deletion(-)
+ 5 files changed, 74 insertions(+), 1 deletion(-)
 
 diff --git a/src/ipa/ipu3/algorithms/agc.cpp b/src/ipa/ipu3/algorithms/agc.cpp
 index d6a7036c6..5dfb95dc2 100644
@@ -65,8 +72,49 @@ index d6a7036c6..5dfb95dc2 100644
  	metadata.set(controls::ExposureTime, exposureTime.get<std::micro>());
  
  	/* \todo Use VBlank value calculated from each frame exposure. */
+diff --git a/src/ipa/ipu3/ipa_context.cpp b/src/ipa/ipu3/ipa_context.cpp
+index 2d1dc89d2..8e6d4e222 100644
+--- a/src/ipa/ipu3/ipa_context.cpp
++++ b/src/ipa/ipu3/ipa_context.cpp
+@@ -107,6 +107,16 @@ namespace libcamera::ipa::ipu3 {
+  *
+  * \var IPASessionConfiguration::agc.maxAnalogueGain
+  * \brief Maximum analogue gain supported with the configured sensor
++ *
++ * \var IPASessionConfiguration::agc.maxDigitalGain
++ * \brief Maximum sensor digital gain used by the AGC
++ *
++ * Set to 1.0 when the sensor digital gain isn't used.
++ *
++ * \var IPASessionConfiguration::agc.digitalGainUnity
++ * \brief V4L2_CID_DIGITAL_GAIN control value corresponding to unity gain
++ *
++ * Set to 0 when the sensor digital gain isn't used.
+  */
+ 
+ /**
+@@ -145,6 +155,9 @@ namespace libcamera::ipa::ipu3 {
+  * \brief Analogue gain multiplier
+  *
+  * The gain should be adapted to the sensor specific gain code before applying.
++ *
++ * \var IPAActiveState::agc.digitalGain
++ * \brief Sensor digital gain multiplier
+  */
+ 
+ /**
+@@ -202,6 +215,9 @@ namespace libcamera::ipa::ipu3 {
+  * \var IPAFrameContext::sensor.gain
+  * \brief Analogue gain multiplier
+  *
++ * \var IPAFrameContext::sensor.digitalGain
++ * \brief Sensor digital gain multiplier
++ *
+  * \var IPAFrameContext::lsc
+  * \brief Lens shading correction parameters for the frame
+  *
 diff --git a/src/ipa/ipu3/ipa_context.h b/src/ipa/ipu3/ipa_context.h
-index 9800cf4db..0319aacfc 100644
+index b367436e6..c0caea29a 100644
 --- a/src/ipa/ipu3/ipa_context.h
 +++ b/src/ipa/ipu3/ipa_context.h
 @@ -37,6 +37,8 @@ struct IPASessionConfiguration {
@@ -95,7 +143,7 @@ index 9800cf4db..0319aacfc 100644
  
  	struct {
 diff --git a/src/ipa/ipu3/ipu3.cpp b/src/ipa/ipu3/ipu3.cpp
-index ed29b3ce5..7cd88a5d8 100644
+index 9894e09d8..99b8852e9 100644
 --- a/src/ipa/ipu3/ipu3.cpp
 +++ b/src/ipa/ipu3/ipu3.cpp
 @@ -57,6 +57,9 @@ static constexpr uint32_t kMaxCellSizeLog2 = 6;
@@ -108,14 +156,18 @@ index ed29b3ce5..7cd88a5d8 100644
  namespace libcamera {
  
  LOG_DEFINE_CATEGORY(IPAIPU3)
-@@ -226,6 +229,26 @@ void IPAIPU3::updateSessionConfiguration(const ControlInfoMap &sensorControls)
+@@ -226,6 +229,30 @@ void IPAIPU3::updateSessionConfiguration(const ControlInfoMap &sensorControls)
  	context_.configuration.agc.minAnalogueGain = camHelper_->gain(minGain);
  	context_.configuration.agc.maxAnalogueGain = camHelper_->gain(maxGain);
  
 +	/*
 +	 * Use the sensor's digital gain, if it has one, once exposure time and
-+	 * analogue gain are exhausted. The control's default value is taken as
-+	 * unity gain. Limit it to kMaxDigitalGain to bound the noise.
++	 * analogue gain are exhausted. Limit it to kMaxDigitalGain to bound the
++	 * noise.
++	 *
++	 * \todo V4L2 doesn't define the scale of V4L2_CID_DIGITAL_GAIN. Assume
++	 * that the control's default value is unity gain, as for most sensor
++	 * drivers, until the gain model is provided by the sensor helper.
 +	 */
 +	context_.configuration.agc.maxDigitalGain = 1.0;
 +	context_.configuration.agc.digitalGainUnity = 0;
@@ -135,7 +187,7 @@ index ed29b3ce5..7cd88a5d8 100644
  	/*
  	 * The sensor helper expresses the black level on a 16-bit scale, the
  	 * ImgU black level correction works on the 10-bit CIO2 output. Keep
-@@ -606,6 +629,14 @@ void IPAIPU3::processStats(const uint32_t frame,
+@@ -606,6 +633,14 @@ void IPAIPU3::processStats(const uint32_t frame,
  
  	frameContext.sensor.exposure = sensorControls.get(V4L2_CID_EXPOSURE).get<int32_t>();
  	frameContext.sensor.gain = camHelper_->gain(sensorControls.get(V4L2_CID_ANALOGUE_GAIN).get<int32_t>());
@@ -150,7 +202,7 @@ index ed29b3ce5..7cd88a5d8 100644
  
  	ControlList metadata(controls::controls);
  
-@@ -656,6 +687,11 @@ void IPAIPU3::setControls(unsigned int frame)
+@@ -656,6 +691,11 @@ void IPAIPU3::setControls(unsigned int frame)
  	ControlList ctrls(sensorCtrls_);
  	ctrls.set(V4L2_CID_EXPOSURE, exposure);
  	ctrls.set(V4L2_CID_ANALOGUE_GAIN, gain);

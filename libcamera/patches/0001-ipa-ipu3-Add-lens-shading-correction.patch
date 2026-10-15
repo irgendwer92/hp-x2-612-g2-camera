@@ -1,4 +1,4 @@
-From a76ba8322cd275dc2cac779b6a9708bec7342b66 Mon Sep 17 00:00:00 2001
+From 4ce6d30be557cc9bfc765d61752d9a4c740b95a8 Mon Sep 17 00:00:00 2001
 From: Richard Fritz <gh@chaos4all.de>
 Date: Wed, 14 Oct 2026 22:37:09 +0200
 Subject: [PATCH 1/8] ipa: ipu3: Add lens shading correction
@@ -24,53 +24,63 @@ temperatures:
           b: [ ... ]
 
 At configure time, the algorithm selects the finest hardware grid that
-covers the BDS output frame within the hardware limits (73 nodes per
-line, 28 LUT sets of 146 cells, power-of-two block sizes), maps each grid
-node through the BDS scaling, the input feeder crop and the sensor
+covers the BDS output frame within the hardware limits (at most 73 nodes
+per line, 28 LUT sets of 146 cells, power-of-two block sizes), maps each
+grid node through the BDS scaling, the input feeder crop and the sensor
 analogue crop and binning to the pixel array, and resamples the tuning
 tables bilinearly. The channels are named after the pixel colour, as the
 kernel realigns the input frame to the GRBG order used internally by the
 ImgU.
 
 At runtime, the tables are interpolated by the colour temperature
-estimated by the AWB algorithm, converted to the hardware format (12-bit
-values with 10 fractional bits added to an implicit unity gain, with the
-gain factor raised automatically when gains exceed 5.0) and written to
-the parameters buffer for every frame. The LensShadingCorrectionEnable
-control allows disabling the correction at runtime.
+estimated by the AWB algorithm, converted to the hardware format and
+written to the parameters buffer for every frame. The UAPI doesn't
+document the LUT format beyond the gain ranges selected by the gain
+factor. The algorithm assumes 12-bit values with 10 fractional bits
+added to an implicit unity gain, and raises the gain factor when gains
+exceed 5.0. The LensShadingCorrectionEnable control allows disabling
+the correction at runtime.
 
 When no Lsc entry is present in the tuning file, the IPA behaves as
 before.
 
-Assisted-by: Claude Opus 5.5
+Tested with an OV8858 on an HP Pro x2 612 G2, with tables calibrated
+from flat-field captures. Together with the correct black level for the
+sensor, added in subsequent patches, the corner to centre ratio of R/G
+on a flat field goes from 0.62-0.66 to 1.02-1.03.
+
+Assisted-by: Claude:claude-opus-5-5
 Signed-off-by: Richard Fritz <gh@chaos4all.de>
 ---
- src/ipa/ipu3/algorithms/lsc.cpp     | 567 ++++++++++++++++++++++++++++
+ src/ipa/ipu3/algorithms/lsc.cpp     | 602 ++++++++++++++++++++++++++++
  src/ipa/ipu3/algorithms/lsc.h       |  74 ++++
  src/ipa/ipu3/algorithms/meson.build |   1 +
  src/ipa/ipu3/ipa_context.cpp        |  14 +
  src/ipa/ipu3/ipa_context.h          |   8 +
- 5 files changed, 664 insertions(+)
+ 5 files changed, 699 insertions(+)
  create mode 100644 src/ipa/ipu3/algorithms/lsc.cpp
  create mode 100644 src/ipa/ipu3/algorithms/lsc.h
 
 diff --git a/src/ipa/ipu3/algorithms/lsc.cpp b/src/ipa/ipu3/algorithms/lsc.cpp
 new file mode 100644
-index 000000000..01da1748d
+index 000000000..d779bbd11
 --- /dev/null
 +++ b/src/ipa/ipu3/algorithms/lsc.cpp
-@@ -0,0 +1,567 @@
+@@ -0,0 +1,602 @@
 +/* SPDX-License-Identifier: LGPL-2.1-or-later */
 +/*
-+ * Copyright (C) 2026, the libcamera contributors
++ * Copyright (C) 2026, Richard Fritz <gh@chaos4all.de>
 + *
-+ * IPU3 Lens Shading Correction
++ * IPU3 Lens Shading Correction control
 + */
 +
 +#include "lsc.h"
 +
 +#include <algorithm>
 +#include <cmath>
++#include <optional>
++#include <stdint.h>
++#include <utility>
 +
 +#include <libcamera/base/log.h>
 +#include <libcamera/base/utils.h>
@@ -129,12 +139,15 @@ index 000000000..01da1748d
 + * The SHD grid is defined in the coordinate system of the BDS output frame.
 + * Its nodes are spaced by power-of-two pixel counts, horizontally and
 + * vertically, starting at the top-left pixel of the frame. The grid is
-+ * limited to 73 nodes per line, and the gain table is stored in 28 sets of
-+ * 146 nodes, each set holding an integer number of grid lines. Gains are
-+ * stored as 12-bit unsigned fixed-point values on top of an implicit unity
-+ * gain, with 10 fractional bits, giving a [1.0, 5.0[ range. The range can be
-+ * extended to [1.0, 9.0[ or [1.0, 17.0[ at the expense of precision through
-+ * the gain factor parameter.
++ * limited to 73 nodes per line by this implementation, and the gain table is
++ * stored in 28 sets of 146 nodes, each set holding an integer number of grid
++ * lines.
++ *
++ * The UAPI only documents the [1, 5], [1, 9] and [1, 17] gain ranges selected
++ * by the gain factor parameter. This implementation assumes that the LUT
++ * stores 12-bit unsigned fixed-point values with 10, 9 or 8 fractional bits
++ * respectively, added to an implicit unity gain, and selects the most precise
++ * gain factor that covers the largest gain.
 + *
 + * The tuning data describes the shading gains on a uniform grid covering the
 + * full sensor pixel array, independently of the sensor and ImgU
@@ -168,16 +181,42 @@ index 000000000..01da1748d
 + * by the AWB algorithm.
 + */
 +
++/**
++ * \struct Lsc::Components
++ * \brief Shading gain tables for the four Bayer channels
++ *
++ * Each table stores one gain per grid point, in row-major order.
++ *
++ * \var Lsc::Components::r
++ * \brief Gains for the red pixels
++ *
++ * \var Lsc::Components::gr
++ * \brief Gains for the green pixels on the red lines
++ *
++ * \var Lsc::Components::gb
++ * \brief Gains for the green pixels on the blue lines
++ *
++ * \var Lsc::Components::b
++ * \brief Gains for the blue pixels
++ */
++
 +LOG_DEFINE_CATEGORY(IPU3Lsc)
 +
 +namespace {
 +
-+/* Maximum grid width, constrained by the number of cells per LUT set. */
++/*
++ * Grid size limits. The UAPI documents a [8, 128] range for both dimensions.
++ * The width is further limited to the kernel default of 73, which stores two
++ * grid lines in each LUT set, as larger widths haven't been tested.
++ */
 +constexpr unsigned int kMaxGridWidth = 73;
 +constexpr unsigned int kMinGridSize = 8;
 +constexpr unsigned int kMaxGridHeight = 128;
 +
-+/* Block sizes, expressed as log2 of the number of pixels. */
++/*
++ * Block sizes, expressed as log2 of the number of pixels. The maximum is set
++ * by the 3-bit register fields, the minimum is an arbitrary lower bound.
++ */
 +constexpr unsigned int kMinBlockSizeLog2 = 3;
 +constexpr unsigned int kMaxBlockSizeLog2 = 7;
 +
@@ -510,7 +549,8 @@ index 000000000..01da1748d
 +	const double scale = 1 << (kGainFractionalBits - gainFactor);
 +	auto encode = [scale](double gain) -> uint16_t {
 +		double value = std::round((gain - 1.0) * scale);
-+		return std::clamp(value, 0.0, static_cast<double>(kGainMaxValue));
++		return static_cast<uint16_t>(std::clamp(value, 0.0,
++							static_cast<double>(kGainMaxValue)));
 +	};
 +
 +	lut_ = {};
@@ -566,8 +606,9 @@ index 000000000..01da1748d
 + *
 + * Interpolate the shading tables for the current colour temperature when it
 + * has changed, and copy the shading configuration and LUT to the parameters
-+ * buffer. The configuration is written for every frame, as parameter buffers
-+ * are recycled and the kernel only reads structures whose use flag is set.
++ * buffer. The kernel keeps the previous configuration when the use flag isn't
++ * set, but the configuration is written for every frame for simplicity, at the
++ * cost of copying the LUT.
 + */
 +void Lsc::prepare(IPAContext &context, [[maybe_unused]] const uint32_t frame,
 +		  IPAFrameContext &frameContext, ipu3_uapi_params *params)
@@ -598,7 +639,8 @@ index 000000000..01da1748d
 +
 +	/*
 +	 * When disabled, also program unity gains (a zero LUT, as used by the
-+	 * kernel defaults) in case the enable bit isn't honoured.
++	 * kernel defaults), so that the result doesn't depend on whether the
++	 * firmware honours the enable bit.
 +	 */
 +	params->acc_param.shd.shd = config_;
 +	params->acc_param.shd.shd.general.shd_enable = frameContext.lsc.enabled;
@@ -629,15 +671,15 @@ index 000000000..01da1748d
 +} /* namespace libcamera */
 diff --git a/src/ipa/ipu3/algorithms/lsc.h b/src/ipa/ipu3/algorithms/lsc.h
 new file mode 100644
-index 000000000..a39f0badb
+index 000000000..8e59208fa
 --- /dev/null
 +++ b/src/ipa/ipu3/algorithms/lsc.h
 @@ -0,0 +1,74 @@
 +/* SPDX-License-Identifier: LGPL-2.1-or-later */
 +/*
-+ * Copyright (C) 2026, the libcamera contributors
++ * Copyright (C) 2026, Richard Fritz <gh@chaos4all.de>
 + *
-+ * IPU3 Lens Shading Correction
++ * IPU3 Lens Shading Correction control
 + */
 +
 +#pragma once
