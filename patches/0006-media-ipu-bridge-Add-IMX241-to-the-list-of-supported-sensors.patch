@@ -1,0 +1,31 @@
+From: Richard Fritz <gh@chaos4all.de>
+Subject: [PATCH] media: ipu-bridge: Add IMX241 to the list of supported sensors
+
+The Sony IMX241 is found with ACPI HID INT347F on IPU3 based devices
+such as the HP Pro x2 612 G2, where it is the front camera on CSI-2
+port 1 with 2 data lanes.
+
+Add it to the list of sensors supported by ipu-bridge so that the fwnode
+graph is built for it. On this machine the sensor clock comes from the
+TPS68470, which also clocks the rear OV8858 and runs at 24 MHz for it.
+The imx241 driver then configures a 996 MHz PLL, which gives RAW10 on 2
+lanes at 996 Mbit/s per lane, i.e. a link frequency of 498 MHz.
+
+ipu3-cio2 only registers its subdevices once all sensors in the fwnode
+graph have bound, so without a driver for the IMX241 this entry would
+also make the rear camera unusable on this machine.
+
+Assisted-by: Claude:claude-opus-5-5
+Signed-off-by: Richard Fritz <gh@chaos4all.de>
+---
+--- a/drivers/media/pci/intel/ipu-bridge.c
++++ b/drivers/media/pci/intel/ipu-bridge.c
+@@ -71,6 +71,8 @@
+ 	IPU_SENSOR_CONFIG("INT347A", 1, 360000000),
+ 	/* Omnivision OV7251 */
+ 	IPU_SENSOR_CONFIG("INT347E", 1, 319200000),
++	/* Sony IMX241 */
++	IPU_SENSOR_CONFIG("INT347F", 1, 498000000),
+ 	/* Hynix Hi-556 */
+ 	IPU_SENSOR_CONFIG("INT3537", 1, 437000000),
+ 	/* Lontium lt6911uxe */

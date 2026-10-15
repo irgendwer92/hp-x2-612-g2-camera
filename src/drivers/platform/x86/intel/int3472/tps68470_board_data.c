@@ -370,21 +370,13 @@ static const struct tps68470_regulator_platform_data intel_nvl_tps68470_pdata = 
 };
 
 /*
- * Settings for HP Pro x2 612 G2 tablet (rear OV8858 camera, INT3477)
+ * Settings for HP Pro x2 612 G2 tablet
  *
- * The PMIC uses the Intel CRD-G reference design (_DDN "PMIC-CRDG") like the
- * Surface Go and the BIOS provides no rail mapping (C0Px/C0Gx are all 0), so
- * use the same rail assignment as the Surface Go for the OV8858 (this matches
- * the CRD-G2 sequence of the Windows driver for this module):
- *   CORE 1.2 V -> DVDD, ANA 2.8 V -> AVDD, VSIO 1.8 V -> DOVDD,
- *   VCM 2.8 V -> VCM supply.
- * VIO is kept always-on at the same voltage as VSIO; AUX1/AUX2 are left
- * untouched as no second sensor hangs off this PMIC.
- * The sensor is reached through the PMIC's I2C daisy chain: driving GPIO1
- * as an output causes arbitration loss on the host I2C bus, and the sensor
- * NACKs while the module EEPROM answers, so GPIO1/GPIO2 must stay inputs.
- * The SSDB VCM type 2 is a dw9714, which requests its supply as "vcc"; "vdd"
- * is provided as well for other VCM drivers.
+ * The BIOS provides no regulator or GPIO hints for the rear OV8858 (INT3477).
+ * The rails match the Surface Go and what the Windows control logic programs
+ * on this board: CORE 1.2 V for DVDD, ANA 2.8 V for AVDD, VSIO 1.8 V for
+ * DOVDD and VCM 2.8 V for the dw9714 lens actuator. VIO is kept always-on at
+ * the same voltage as VSIO.
  */
 
 static struct regulator_consumer_supply int3477_core_consumer_supplies[] = {
@@ -396,16 +388,15 @@ static struct regulator_consumer_supply int3477_ana_consumer_supplies[] = {
 };
 
 static struct regulator_consumer_supply int3477_vcm_consumer_supplies[] = {
-	REGULATOR_SUPPLY("vdd", "i2c-INT3477:00-VCM"),
 	REGULATOR_SUPPLY("vcc", "i2c-INT3477:00-VCM"),
 };
 
 static struct regulator_consumer_supply int3477_vsio_consumer_supplies[] = {
 	REGULATOR_SUPPLY("dovdd", "i2c-INT3477:00"),
 	/*
-	 * VSIO also switches the sensor I2C/IO path; the Windows control logic
-	 * enables it for the front IMX241 as well, which does not answer on
-	 * I2C without it.
+	 * VSIO also switches the sensor I2C path. The front IMX241 does not
+	 * answer on I2C without it, and the Windows control logic enables it
+	 * for either sensor.
 	 */
 	REGULATOR_SUPPLY("vsio", "i2c-INT347F:00"),
 };
@@ -433,9 +424,8 @@ static const struct regulator_init_data hp_x2_612_g2_tps68470_ana_reg_init_data 
 };
 
 /*
- * The OV8858 does not answer on I2C unless the VCM rail is on as well. The
- * Windows driver always enables VCM together with the sensor rails on this
- * CRD-G2 design, so keep it on.
+ * The OV8858 does not answer on I2C unless the VCM rail is on as well, and the
+ * Windows control logic always enables VCM together with the sensor rails.
  */
 static const struct regulator_init_data hp_x2_612_g2_tps68470_vcm_reg_init_data = {
 	.constraints = {
@@ -471,10 +461,8 @@ static const struct regulator_init_data hp_x2_612_g2_tps68470_vsio_reg_init_data
 };
 
 /*
- * Front IMX241 camera (INT347F, module FN50FF-562H) on the same PMIC. The
- * Windows driver powers it from VAUX1 (core, 1.05 V for this module) and
- * VAUX2 (I/O, 1.8 V); its 2.8 V analog supply is an external regulator
- * enabled by PMIC GPIO4. Supply names follow the ccs driver.
+ * The front IMX241 (INT347F) is powered from AUX1 (core) and AUX2 (I/O). Its
+ * 2.8 V analogue supply is an external regulator enabled by PMIC GPIO4.
  */
 static struct regulator_consumer_supply int347f_aux1_consumer_supplies[] = {
 	REGULATOR_SUPPLY("vcore", "i2c-INT347F:00"),
@@ -485,9 +473,9 @@ static struct regulator_consumer_supply int347f_aux2_consumer_supplies[] = {
 };
 
 /*
- * The Windows imx241 driver leaves the core voltage unset for this module, so
- * the control logic uses its 1.05 V default. That is not on the AUX regulator's
- * 17.8 mV grid; like the Windows driver, round up to the next step.
+ * The Windows driver uses 1.05 V for the IMX241 core supply on this module.
+ * That is not on the AUX regulator's 17.8 mV grid, so round up to the next
+ * step as the Windows driver does.
  */
 static const struct regulator_init_data hp_x2_612_g2_tps68470_aux1_reg_init_data = {
 	.constraints = {
@@ -574,12 +562,10 @@ static struct gpiod_lookup_table hp_x2_612_g2_int3477_gpios = {
 	}
 };
 
-/* Windows drives GPIO5 and GPIO6 high to power the front sensor up */
 static struct gpiod_lookup_table hp_x2_612_g2_int347f_gpios = {
 	.dev_id = "i2c-INT347F:00",
 	.table = {
 		GPIO_LOOKUP("tps68470-gpio", 4, "avdd-enable", GPIO_ACTIVE_HIGH),
-		GPIO_LOOKUP("tps68470-gpio", 3, "vcm-enable", GPIO_ACTIVE_HIGH),
 		GPIO_LOOKUP("tps68470-gpio", 5, "reset", GPIO_ACTIVE_LOW),
 		GPIO_LOOKUP("tps68470-gpio", 6, "powerdown", GPIO_ACTIVE_LOW),
 		{ }

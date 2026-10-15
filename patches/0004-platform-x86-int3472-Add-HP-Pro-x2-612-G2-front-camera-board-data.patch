@@ -1,53 +1,49 @@
 From: Richard Fritz <gh@chaos4all.de>
-Subject: [PATCH] platform/x86: int3472: tps68470: Add HP Pro x2 612 G2 front camera supplies
+Subject: [PATCH] platform/x86: int3472: Add HP Pro x2 612 G2 front camera board data
 
-Not for upstream yet: unverified on hardware.
+The front camera of the HP Pro x2 612 G2 is a Sony IMX241 (ACPI HID
+INT347F, I2C3 address 0x37, CSI-2 port 1 with 2 data lanes), powered by
+the same TPS68470 as the rear OV8858.
 
-The front IMX241 camera (ACPI INT347F, module FN50FF-562H, I2C3 0x37,
-CSI-2 port 1, 2 lanes) shares the TPS68470 with the rear OV8858. From the
-Windows control-logic and imx241 drivers: VAUX1 is its core supply (the imx241
-driver leaves it unset for this module, so the 1.05 V default applies,
-rounded up to the regulator grid as Windows does: 1.053 V), VAUX2 its I/O supply (1.8 V), PMIC GPIO4 enables an
-external 2.8 V analog regulator, GPIO3 a VCM supply, and GPIO5/GPIO6 are
-driven high to take the sensor out of reset/powerdown.
+As programmed by the Windows drivers for this module, AUX1 supplies the
+sensor core at 1.05 V, rounded up to 1.053 V on the AUX regulator's
+17.8 mV grid as Windows does, and AUX2 supplies the sensor I/O at
+1.8 V. PMIC GPIO4 enables an external 2.8 V regulator for the analogue
+supply, and GPIO5 and GPIO6 must be driven high to release the sensor
+from reset and powerdown.
 
-The front sensor also needs the PMIC VSIO rail (S_I2C_CTL), which on
-this board otherwise only feeds the rear OV8858: the Windows control
-logic enables it in the common sensor power-on path for either camera,
-and the IMX241 NACKs on I2C while it is off. Add it as a "vsio" supply
-of the front sensor.
+The IMX241 also needs the VSIO rail, which switches the PMIC's sensor
+I2C path: the sensor NACKs on I2C while VSIO is off, and the Windows
+control logic enables VSIO in its common power-on path for either
+sensor. Add it as a "vsio" supply of the front sensor.
 
-Add the regulator consumers (named after the ccs driver's supplies) and
-a GPIO lookup table for i2c-INT347F:00. Nothing is powered unless a
-driver binds to the sensor.
+The supply and GPIO names match the imx241 driver.
 
-Assisted-by: Claude Opus 5.5
+Assisted-by: Claude:claude-opus-5-5
 Signed-off-by: Richard Fritz <gh@chaos4all.de>
 ---
 --- a/drivers/platform/x86/intel/int3472/tps68470_board_data.c
 +++ b/drivers/platform/x86/intel/int3472/tps68470_board_data.c
-@@ -402,6 +402,12 @@
+@@ -393,6 +393,12 @@
  
  static struct regulator_consumer_supply int3477_vsio_consumer_supplies[] = {
  	REGULATOR_SUPPLY("dovdd", "i2c-INT3477:00"),
 +	/*
-+	 * VSIO also switches the sensor I2C/IO path; the Windows control logic
-+	 * enables it for the front IMX241 as well, which does not answer on
-+	 * I2C without it.
++	 * VSIO also switches the sensor I2C path. The front IMX241 does not
++	 * answer on I2C without it, and the Windows control logic enables it
++	 * for either sensor.
 +	 */
 +	REGULATOR_SUPPLY("vsio", "i2c-INT347F:00"),
  };
  
  static const struct regulator_init_data hp_x2_612_g2_tps68470_core_reg_init_data = {
-@@ -464,6 +470,47 @@
+@@ -454,6 +460,45 @@
  	.consumer_supplies = int3477_vsio_consumer_supplies,
  };
  
 +/*
-+ * Front IMX241 camera (INT347F, module FN50FF-562H) on the same PMIC. The
-+ * Windows driver powers it from VAUX1 (core, 1.05 V for this module) and
-+ * VAUX2 (I/O, 1.8 V); its 2.8 V analog supply is an external regulator
-+ * enabled by PMIC GPIO4. Supply names follow the ccs driver.
++ * The front IMX241 (INT347F) is powered from AUX1 (core) and AUX2 (I/O). Its
++ * 2.8 V analogue supply is an external regulator enabled by PMIC GPIO4.
 + */
 +static struct regulator_consumer_supply int347f_aux1_consumer_supplies[] = {
 +	REGULATOR_SUPPLY("vcore", "i2c-INT347F:00"),
@@ -58,9 +54,9 @@ Signed-off-by: Richard Fritz <gh@chaos4all.de>
 +};
 +
 +/*
-+ * The Windows imx241 driver leaves the core voltage unset for this module, so
-+ * the control logic uses its 1.05 V default. That is not on the AUX regulator's
-+ * 17.8 mV grid; like the Windows driver, round up to the next step.
++ * The Windows driver uses 1.05 V for the IMX241 core supply on this module.
++ * That is not on the AUX regulator's 17.8 mV grid, so round up to the next
++ * step as the Windows driver does.
 + */
 +static const struct regulator_init_data hp_x2_612_g2_tps68470_aux1_reg_init_data = {
 +	.constraints = {
@@ -87,7 +83,7 @@ Signed-off-by: Richard Fritz <gh@chaos4all.de>
  static const struct tps68470_regulator_platform_data hp_x2_612_g2_tps68470_pdata = {
  	.reg_init_data = {
  		[TPS68470_CORE] = &hp_x2_612_g2_tps68470_core_reg_init_data,
-@@ -471,6 +518,8 @@
+@@ -461,6 +506,8 @@
  		[TPS68470_VCM]  = &hp_x2_612_g2_tps68470_vcm_reg_init_data,
  		[TPS68470_VIO]  = &hp_x2_612_g2_tps68470_vio_reg_init_data,
  		[TPS68470_VSIO] = &hp_x2_612_g2_tps68470_vsio_reg_init_data,
@@ -96,16 +92,14 @@ Signed-off-by: Richard Fritz <gh@chaos4all.de>
  	},
  };
  
-@@ -525,6 +574,18 @@
+@@ -515,6 +562,16 @@
  	}
  };
  
-+/* Windows drives GPIO5 and GPIO6 high to power the front sensor up */
 +static struct gpiod_lookup_table hp_x2_612_g2_int347f_gpios = {
 +	.dev_id = "i2c-INT347F:00",
 +	.table = {
 +		GPIO_LOOKUP("tps68470-gpio", 4, "avdd-enable", GPIO_ACTIVE_HIGH),
-+		GPIO_LOOKUP("tps68470-gpio", 3, "vcm-enable", GPIO_ACTIVE_HIGH),
 +		GPIO_LOOKUP("tps68470-gpio", 5, "reset", GPIO_ACTIVE_LOW),
 +		GPIO_LOOKUP("tps68470-gpio", 6, "powerdown", GPIO_ACTIVE_LOW),
 +		{ }
@@ -115,7 +109,7 @@ Signed-off-by: Richard Fritz <gh@chaos4all.de>
  static const struct property_entry int3472_tps68470_daisy_chain_gpio_props[] = {
  	PROPERTY_ENTRY_BOOL("daisy-chain-enable"),
  	{ }
-@@ -587,9 +648,10 @@
+@@ -577,9 +634,10 @@
  	.dev_name = "i2c-INT3472:05",
  	.tps68470_regulator_pdata = &hp_x2_612_g2_tps68470_pdata,
  	.tps68470_gpio_swnode = &int3472_tps68470_daisy_chain_gpio_swnode,

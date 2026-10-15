@@ -1,63 +1,51 @@
 From: Richard Fritz <gh@chaos4all.de>
-Subject: [PATCH] platform/x86: int3472: tps68470: Add board data for HP Pro x2 612 G2
+Subject: [PATCH] platform/x86: int3472: Add board data for HP Pro x2 612 G2
 
-The HP Pro x2 612 G2 is a Skylake tablet with an IPU3 and a TPS68470 PMIC
-(ACPI \_SB.PCI0.CLP0, HID INT3472, _DDN "PMIC-CRDG", CLDB control-logic
-type 2, TPS68470 REVID 0x21 at 0x48 on I2C2) powering the rear OV8858
-sensor (\_SB.PCI0.LNK0, HID INT3477, I2C2 0x10, VCM at 0x0c with SSDB VCM
-type 2 = dw9714, CSI-2 port 0, 4 lanes).
-
-Without board data the PMIC fails to probe with:
+The HP Pro x2 612 G2 is a Skylake tablet with an IPU3 and a TPS68470
+PMIC (ACPI HID INT3472, _DDN "PMIC-CRDG") on I2C2. The PMIC powers the
+rear OV8858 sensor (INT3477) and its dw9714 lens actuator. Without board
+data the PMIC fails to probe with:
 
   int3472-tps68470 i2c-INT3472:05: error -ENODEV: No board-data found for this model
 
 and the sensor, which has an ACPI _DEP on the PMIC, never enumerates.
 
-The BIOS provides no GPIO / power-rail hints (the C0GP/C0Px/C0Gx/C0Fx
-fields are all 0). The PMIC follows the Intel CRD-G reference design, as
-on the Surface Go, so use the same wiring: CORE 1.2 V for DVDD, ANA 2.8 V
-for AVDD, VSIO 1.8 V for DOVDD (with VIO always-on at the same voltage),
-VCM 2.8 V for the lens actuator, and TPS68470 GPIO 9 / 7 as the active-low
-reset / powerdown lines.
+The BIOS provides no GPIO or regulator hints (the C0GP/C0Px/C0Gx/C0Fx
+fields of the CLDB are all 0). The Windows control-logic driver programs
+the same rails as on the Surface Go: CORE 1.2 V for DVDD, ANA 2.8 V for
+AVDD, VSIO 1.8 V for DOVDD with VIO always-on at the same voltage, and
+VCM 2.8 V for the lens actuator. Reset and powerdown are the PMIC's
+s_resetn (GPIO 9) and s_enable (GPIO 7) lines.
 
-The xvclk is provided by the clk-tps68470 cell, whose consumer names are
-derived from the PMIC's ACPI dependents, so no board data is needed for it.
+The OV8858 does not answer on I2C unless the VCM rail is enabled as
+well, and the Windows driver always enables VCM together with the other
+sensor rails, so mark it always-on.
 
 The sensor is reached through the TPS68470 I2C daisy chain: with GPIO1
-driven as an output the host I2C bus reports arbitration loss, and the
-sensor NACKs while the module EEPROM (0x50) answers. Enable the
-daisy-chain property so that GPIO1/GPIO2 are kept as inputs, as is done
-for the MSI Prestige AI Evo and Intel NVL boards.
+driven as an output the host I2C bus reports arbitration loss. Set the
+daisy-chain-enable property so that GPIO1 and GPIO2 are kept as inputs,
+as is done for the MSI Prestige AI Evo and Intel NVL boards.
 
-The OV8858 only answers on I2C when the VCM rail is enabled too; the
-Windows driver for this CRD-G2 board (CLDB CRD version 0x50) always turns
-VCM on together with the sensor rails, so mark it always-on.
+No clock board data is needed: the tps68470 driver derives the clock
+consumer names from the PMIC's ACPI dependents.
 
-Assisted-by: Claude Opus 5.5
+Assisted-by: Claude:claude-opus-5-5
 Signed-off-by: Richard Fritz <gh@chaos4all.de>
 ---
 --- a/drivers/platform/x86/intel/int3472/tps68470_board_data.c
 +++ b/drivers/platform/x86/intel/int3472/tps68470_board_data.c
-@@ -369,6 +369,111 @@
+@@ -369,6 +369,101 @@
  	},
  };
  
 +/*
-+ * Settings for HP Pro x2 612 G2 tablet (rear OV8858 camera, INT3477)
++ * Settings for HP Pro x2 612 G2 tablet
 + *
-+ * The PMIC uses the Intel CRD-G reference design (_DDN "PMIC-CRDG") like the
-+ * Surface Go and the BIOS provides no rail mapping (C0Px/C0Gx are all 0), so
-+ * use the same rail assignment as the Surface Go for the OV8858 (this matches
-+ * the CRD-G2 sequence of the Windows driver for this module):
-+ *   CORE 1.2 V -> DVDD, ANA 2.8 V -> AVDD, VSIO 1.8 V -> DOVDD,
-+ *   VCM 2.8 V -> VCM supply.
-+ * VIO is kept always-on at the same voltage as VSIO; AUX1/AUX2 are left
-+ * untouched as no second sensor hangs off this PMIC.
-+ * The sensor is reached through the PMIC's I2C daisy chain: driving GPIO1
-+ * as an output causes arbitration loss on the host I2C bus, and the sensor
-+ * NACKs while the module EEPROM answers, so GPIO1/GPIO2 must stay inputs.
-+ * The SSDB VCM type 2 is a dw9714, which requests its supply as "vcc"; "vdd"
-+ * is provided as well for other VCM drivers.
++ * The BIOS provides no regulator or GPIO hints for the rear OV8858 (INT3477).
++ * The rails match the Surface Go and what the Windows control logic programs
++ * on this board: CORE 1.2 V for DVDD, ANA 2.8 V for AVDD, VSIO 1.8 V for
++ * DOVDD and VCM 2.8 V for the dw9714 lens actuator. VIO is kept always-on at
++ * the same voltage as VSIO.
 + */
 +
 +static struct regulator_consumer_supply int3477_core_consumer_supplies[] = {
@@ -69,7 +57,6 @@ Signed-off-by: Richard Fritz <gh@chaos4all.de>
 +};
 +
 +static struct regulator_consumer_supply int3477_vcm_consumer_supplies[] = {
-+	REGULATOR_SUPPLY("vdd", "i2c-INT3477:00-VCM"),
 +	REGULATOR_SUPPLY("vcc", "i2c-INT3477:00-VCM"),
 +};
 +
@@ -100,9 +87,8 @@ Signed-off-by: Richard Fritz <gh@chaos4all.de>
 +};
 +
 +/*
-+ * The OV8858 does not answer on I2C unless the VCM rail is on as well. The
-+ * Windows driver always enables VCM together with the sensor rails on this
-+ * CRD-G2 design, so keep it on.
++ * The OV8858 does not answer on I2C unless the VCM rail is on as well, and the
++ * Windows control logic always enables VCM together with the sensor rails.
 + */
 +static const struct regulator_init_data hp_x2_612_g2_tps68470_vcm_reg_init_data = {
 +	.constraints = {
@@ -150,7 +136,7 @@ Signed-off-by: Richard Fritz <gh@chaos4all.de>
  static struct gpiod_lookup_table surface_go_int347a_gpios = {
  	.dev_id = "i2c-INT347A:00",
  	.table = {
-@@ -411,6 +516,15 @@
+@@ -411,6 +506,15 @@
  	}
  };
  
@@ -166,7 +152,7 @@ Signed-off-by: Richard Fritz <gh@chaos4all.de>
  static const struct property_entry int3472_tps68470_daisy_chain_gpio_props[] = {
  	PROPERTY_ENTRY_BOOL("daisy-chain-enable"),
  	{ }
-@@ -469,6 +583,16 @@
+@@ -469,6 +573,16 @@
  	},
  };
  
@@ -183,7 +169,7 @@ Signed-off-by: Richard Fritz <gh@chaos4all.de>
  static const struct dmi_system_id int3472_tps68470_board_data_table[] = {
  	{
  		.matches = {
-@@ -529,6 +653,13 @@
+@@ -529,6 +643,13 @@
  		},
  		.driver_data = (void *)&intel_nvl_tps68470_board_data,
  	},

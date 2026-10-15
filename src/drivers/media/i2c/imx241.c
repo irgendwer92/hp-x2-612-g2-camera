@@ -24,10 +24,10 @@
 #include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
 #include <linux/ktime.h>
-#include <linux/minmax.h>
 #include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/pm_runtime.h>
+#include <linux/property.h>
 #include <linux/regulator/consumer.h>
 
 #include <media/v4l2-cci.h>
@@ -93,7 +93,14 @@
 
 #define IMX241_NUM_DATA_LANES		2U
 
-/* In power-up order. The analogue supply "avdd" is optional, see below. */
+/*
+ * Minimum time the sensor stays unpowered before it is powered up again, so
+ * that its rails discharge and it sees a clean power-on reset. The TPS68470
+ * LDOs and the external analogue regulator are not actively discharged.
+ */
+#define IMX241_MIN_POWER_OFF_MS		100
+
+/* In power-up order. The "vsio" and "avdd" supplies are optional. */
 static const char * const imx241_supply_names[] = {
 	"vio",		/* I/O 1.8 V */
 	"vcore",	/* Core 1.05 V */
@@ -246,7 +253,7 @@ struct imx241_mode {
 
 static const struct imx241_mode imx241_modes[] = {
 	{
-		/* Windows table A */
+		/* Full resolution */
 		.width = 2592,
 		.height = 1944,
 		.llp = 1456,
@@ -254,11 +261,7 @@ static const struct imx241_mode imx241_modes[] = {
 		.regs = imx241_2592x1944_regs,
 		.num_regs = ARRAY_SIZE(imx241_2592x1944_regs),
 	}, {
-		/*
-		 * 2x2 binned. Windows table F's timing at a PLL of about 1 GHz
-		 * (Windows tables C/D use the same readout registers with a
-		 * slower PLL and a different link frequency).
-		 */
+		/* 2x2 binned */
 		.width = 1296,
 		.height = 972,
 		.llp = 1600,
@@ -444,7 +447,7 @@ static int imx241_init_controls(struct imx241 *imx241)
 	int exposure_max;
 	int ret;
 
-	ret = v4l2_ctrl_handler_init(hdl, 13);
+	ret = v4l2_ctrl_handler_init(hdl, 12);
 	if (ret)
 		return ret;
 
@@ -530,8 +533,8 @@ error:
  * The external clock is shared with other sensors on some platforms (the
  * TPS68470 on the HP Pro x2 612 G2 also clocks the rear OV8858), and one of
  * them may have changed its rate while this sensor was powered down. Pick the
- * PLL configuration matching the current rate. Call with the clock enabled,
- * so the rate cannot change underneath.
+ * PLL configuration matching the current rate. Call with the clock enabled:
+ * the TPS68470 clock cannot change rate while it is prepared.
  */
 static int imx241_update_clk_cfg(struct imx241 *imx241)
 {
@@ -810,17 +813,10 @@ static const struct v4l2_subdev_internal_ops imx241_internal_ops = {
  */
 
 /*
- * Power-up order of the Windows driver: analogue supply, I/O, core, clock,
- * then release reset and powerdown and wait 20 ms before the first I2C
- * access.
+ * Power-up order of the Windows driver: VSIO, analogue supply, I/O, core,
+ * clock, then release reset and powerdown and wait 20 ms before the first
+ * I2C access.
  */
-/*
- * Minimum time the sensor stays unpowered before it is powered up again, so
- * that its rails discharge and it sees a clean power-on reset. The TPS68470
- * LDOs and the external analogue regulator are not actively discharged.
- */
-#define IMX241_MIN_POWER_OFF_MS		100
-
 static int imx241_power_on(struct device *dev)
 {
 	struct v4l2_subdev *sd = dev_get_drvdata(dev);
@@ -831,7 +827,6 @@ static int imx241_power_on(struct device *dev)
 
 	if (imx241->power_off_time) {
 		off_ms = ktime_ms_delta(ktime_get(), imx241->power_off_time);
-		dev_dbg(dev, "powering up after %lld ms off\n", off_ms);
 		if (off_ms < IMX241_MIN_POWER_OFF_MS)
 			msleep(IMX241_MIN_POWER_OFF_MS - off_ms);
 	}
@@ -911,7 +906,6 @@ static int imx241_power_off(struct device *dev)
 		regulator_disable(imx241->vsio);
 
 	imx241->power_off_time = ktime_get();
-	dev_dbg(dev, "powered down\n");
 
 	return 0;
 }
@@ -920,11 +914,11 @@ static int imx241_power_off(struct device *dev)
  * Probe & remove
  */
 
-static int imx241_parse_endpoint(struct device *dev, struct imx241 *imx241)
+static int imx241_parse_endpoint(struct device *dev,
+				 unsigned long *link_freq_bitmap)
 {
 	struct v4l2_fwnode_endpoint ep = { .bus_type = V4L2_MBUS_CSI2_DPHY };
 	struct fwnode_handle *endpoint;
-	unsigned long link_freq_bitmap;
 	int ret;
 
 	/*
@@ -953,19 +947,7 @@ static int imx241_parse_endpoint(struct device *dev, struct imx241 *imx241)
 				       ep.nr_of_link_frequencies,
 				       imx241_link_freq_menu,
 				       ARRAY_SIZE(imx241_link_freq_menu),
-				       &link_freq_bitmap);
-	if (ret)
-		goto out;
-
-	/*
-	 * The link frequency follows the external clock rate. Firmware is
-	 * expected to list the one for the clock it provides.
-	 */
-	if (!(link_freq_bitmap & BIT(imx241->clk_cfg->link_freq_index)))
-		dev_warn(dev,
-			 "link frequency %lld Hz for the %lu Hz clock not listed by firmware\n",
-			 imx241_link_freq_menu[imx241->clk_cfg->link_freq_index],
-			 imx241->clk_cfg->ext_clk);
+				       link_freq_bitmap);
 
 out:
 	v4l2_fwnode_endpoint_free(&ep);
@@ -1035,12 +1017,7 @@ static int imx241_get_power_resources(struct device *dev,
 		return dev_err_probe(dev, ret, "failed to get regulators\n");
 
 	/*
-	 * The 2.8 V analogue supply is optional: some boards switch an
-	 * external regulator with a GPIO instead of describing it as a
-	 * regulator, and ACPI platforms do not get dummy regulators.
-	 */
-	/*
-	 * On TPS68470 based designs the sensor I2C/IO switch (VSIO) is shared
+	 * On TPS68470 based designs the sensor I2C switch (VSIO) is shared
 	 * between the cameras and must be on while this sensor is powered;
 	 * the Windows control logic enables it for every sensor.
 	 */
@@ -1052,6 +1029,11 @@ static int imx241_get_power_resources(struct device *dev,
 		imx241->vsio = NULL;
 	}
 
+	/*
+	 * The 2.8 V analogue supply is optional: some boards switch an
+	 * external regulator with a GPIO instead of describing it as a
+	 * regulator.
+	 */
 	imx241->avdd = devm_regulator_get_optional(dev, "avdd");
 	if (IS_ERR(imx241->avdd)) {
 		if (PTR_ERR(imx241->avdd) != -ENODEV)
@@ -1107,8 +1089,14 @@ static int imx241_identify(struct device *dev, struct imx241 *imx241)
 static int imx241_probe(struct i2c_client *client)
 {
 	struct device *dev = &client->dev;
+	unsigned long link_freq_bitmap;
 	struct imx241 *imx241;
 	int ret;
+
+	/* Parse the endpoint, or defer, before claiming any resources. */
+	ret = imx241_parse_endpoint(dev, &link_freq_bitmap);
+	if (ret)
+		return ret;
 
 	imx241 = devm_kzalloc(dev, sizeof(*imx241), GFP_KERNEL);
 	if (!imx241)
@@ -1116,11 +1104,6 @@ static int imx241_probe(struct i2c_client *client)
 
 	v4l2_i2c_subdev_init(&imx241->sd, client, &imx241_subdev_ops);
 	imx241->sd.internal_ops = &imx241_internal_ops;
-
-	/* Check for the fwnode endpoint before claiming anything else. */
-	if (!fwnode_graph_get_endpoint_count(dev_fwnode(dev), 0))
-		return dev_err_probe(dev, -EPROBE_DEFER,
-				     "waiting for fwnode graph endpoint\n");
 
 	imx241->regmap = devm_cci_regmap_init_i2c(client, 16);
 	if (IS_ERR(imx241->regmap))
@@ -1131,9 +1114,15 @@ static int imx241_probe(struct i2c_client *client)
 	if (ret)
 		return ret;
 
-	ret = imx241_parse_endpoint(dev, imx241);
-	if (ret)
-		return ret;
+	/*
+	 * The link frequency follows the external clock rate. Firmware is
+	 * expected to list the one for the clock it provides.
+	 */
+	if (!(link_freq_bitmap & BIT(imx241->clk_cfg->link_freq_index)))
+		dev_warn(dev,
+			 "link frequency %lld Hz for the %lu Hz clock not listed by firmware\n",
+			 imx241_link_freq_menu[imx241->clk_cfg->link_freq_index],
+			 imx241->clk_cfg->ext_clk);
 
 	ret = imx241_get_power_resources(dev, imx241);
 	if (ret)
@@ -1230,17 +1219,10 @@ static const struct acpi_device_id imx241_acpi_ids[] = {
 };
 MODULE_DEVICE_TABLE(acpi, imx241_acpi_ids);
 
-static const struct of_device_id imx241_of_match[] = {
-	{ .compatible = "sony,imx241" },
-	{ /* sentinel */ }
-};
-MODULE_DEVICE_TABLE(of, imx241_of_match);
-
 static struct i2c_driver imx241_i2c_driver = {
 	.driver = {
 		.name = "imx241",
 		.acpi_match_table = imx241_acpi_ids,
-		.of_match_table = imx241_of_match,
 		.pm = pm_ptr(&imx241_pm_ops),
 	},
 	.probe = imx241_probe,
@@ -1248,5 +1230,6 @@ static struct i2c_driver imx241_i2c_driver = {
 };
 module_i2c_driver(imx241_i2c_driver);
 
+MODULE_AUTHOR("Richard Fritz <gh@chaos4all.de>");
 MODULE_DESCRIPTION("Sony IMX241 camera sensor driver");
 MODULE_LICENSE("GPL");

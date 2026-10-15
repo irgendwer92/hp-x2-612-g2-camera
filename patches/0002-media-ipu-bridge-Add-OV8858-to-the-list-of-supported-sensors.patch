@@ -1,15 +1,15 @@
 From: Richard Fritz <gh@chaos4all.de>
-Subject: [PATCH] media: ipu-bridge: Add OV8858 (INT3477) to supported sensors
+Subject: [PATCH] media: ipu-bridge: Add OV8858 to the list of supported sensors
 
 The OmniVision OV8858 is found with ACPI HID INT3477 on IPU3 based
-devices such as the HP Pro x2 612 G2, where it is the rear camera
-connected to CSI-2 port 0 with 4 data lanes.
+devices such as the HP Pro x2 612 G2, where it is the rear camera on
+CSI-2 port 0 with 4 data lanes.
 
-Add it to the list of sensors supported by ipu-bridge so that the
-fwnode graph is built for it. The ov8858 driver supports a single link
-frequency of 360 MHz.
+Add it to the list of sensors supported by ipu-bridge so that the fwnode
+graph is built for it, with the 360 MHz link frequency used by the
+ov8858 driver.
 
-Assisted-by: Claude Opus 5.5
+Assisted-by: Claude:claude-opus-5-5
 Signed-off-by: Richard Fritz <gh@chaos4all.de>
 ---
 --- a/drivers/media/pci/intel/ipu-bridge.c

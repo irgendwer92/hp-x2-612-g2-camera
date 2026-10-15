@@ -1,24 +1,27 @@
 From: Richard Fritz <gh@chaos4all.de>
-Subject: [PATCH] media: ov8858: Add ACPI support
+Subject: [PATCH] media: i2c: ov8858: Add ACPI support
 
-The OV8858 is used with ACPI HID INT3477 on Intel IPU3 based devices
-such as the HP Pro x2 612 G2, where the sensor is powered by a TPS68470
-PMIC handled by the int3472 driver and the fwnode graph is built by
+The OV8858 is found with ACPI HID INT3477 on IPU3 based devices such as
+the HP Pro x2 612 G2, where the sensor is powered by a TPS68470 PMIC
+handled by the int3472 driver and the fwnode graph is built by
 ipu-bridge.
 
-Add the ACPI match table and make the driver work in that environment:
+Add an ACPI match table and make the driver work in that environment:
 
-- Parse the fwnode graph endpoint first, and return -EPROBE_DEFER when
-  it is not present yet, as it is created by ipu-bridge which may probe
-  after the sensor. Do this before requesting any other resources.
+- Parse the fwnode graph endpoint first, before requesting any other
+  resources, and return -EPROBE_DEFER when it does not exist yet, as
+  ipu-bridge may only create it after the sensor has been enumerated.
+  The subdev is not initialised at that point, so pass the device to
+  ov8858_parse_of() explicitly.
 
 - The register tables are computed for a 24 MHz xvclk, while
-  devm_v4l2_sensor_clk_get() programs the clock to the firmware's
+  devm_v4l2_sensor_clk_get() sets the clock to the firmware's
   clock-frequency on non-OF platforms, which is 19.2 MHz on IPU3
   devices. The TPS68470 clock can generate 24 MHz, so request that rate
-  on non-OF platforms. Behaviour on OF platforms is unchanged.
+  on non-OF platforms. If that fails, continue with a warning as before.
+  Behaviour on OF platforms is unchanged.
 
-Assisted-by: Claude Opus 5.5
+Assisted-by: Claude:claude-opus-5-5
 Signed-off-by: Richard Fritz <gh@chaos4all.de>
 ---
 --- a/drivers/media/i2c/ov8858.c
