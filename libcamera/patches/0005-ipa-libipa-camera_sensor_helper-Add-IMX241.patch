@@ -1,4 +1,4 @@
-From 30a84e2a73cce1571d5f3f64ebb0fd2336227974 Mon Sep 17 00:00:00 2001
+From 3170f47ae9febe687e9c51f6414378c4d5926383 Mon Sep 17 00:00:00 2001
 From: Richard Fritz <gh@chaos4all.de>
 Date: Wed, 14 Oct 2026 22:37:09 +0200
 Subject: [PATCH 5/8] ipa: libipa: camera_sensor_helper: Add IMX241
@@ -11,6 +11,7 @@ analogue_gain_m0 = 0, c0 = 256, m1 = -1, c1 = 256, i.e. a gain of
 256 / (256 - code) for codes 0 to 224. Its data pedestal register
 (0x0008) reads 64 at 10 bits.
 
+Assisted-by: Claude Opus 5.5
 Signed-off-by: Richard Fritz <gh@chaos4all.de>
 ---
  src/ipa/libipa/camera_sensor_helper.cpp | 12 ++++++++++++

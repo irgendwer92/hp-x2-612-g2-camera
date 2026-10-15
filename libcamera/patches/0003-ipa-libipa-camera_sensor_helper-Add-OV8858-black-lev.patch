@@ -1,4 +1,4 @@
-From b99d3c4d3db90f7828384b5353753e43a901b2bf Mon Sep 17 00:00:00 2001
+From b5a5dcec8ff672fd816cf32bcd6f82a1beec210d Mon Sep 17 00:00:00 2001
 From: Richard Fritz <gh@chaos4all.de>
 Date: Wed, 14 Oct 2026 22:37:09 +0200
 Subject: [PATCH 3/8] ipa: libipa: camera_sensor_helper: Add OV8858 black level
@@ -11,6 +11,7 @@ channel.
 Report it from the sensor helper so that IPAs which don't get the level
 from a tuning file use the right value.
 
+Assisted-by: Claude Opus 5.5
 Signed-off-by: Richard Fritz <gh@chaos4all.de>
 ---
  src/ipa/libipa/camera_sensor_helper.cpp | 7 +++++++

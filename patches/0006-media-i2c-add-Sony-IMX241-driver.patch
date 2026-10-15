@@ -44,6 +44,7 @@ module:
 The Kconfig and Makefile entries are not part of this patch: this tree
 builds the driver out of tree.
 
+Assisted-by: Claude Opus 5.5
 Signed-off-by: Richard Fritz <gh@chaos4all.de>
 ---
 --- /dev/null

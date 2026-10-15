@@ -21,6 +21,7 @@ Add the regulator consumers (named after the ccs driver's supplies) and
 a GPIO lookup table for i2c-INT347F:00. Nothing is powered unless a
 driver binds to the sensor.
 
+Assisted-by: Claude Opus 5.5
 Signed-off-by: Richard Fritz <gh@chaos4all.de>
 ---
 --- a/drivers/platform/x86/intel/int3472/tps68470_board_data.c

@@ -9,6 +9,7 @@ Add it to the list of sensors supported by ipu-bridge so that the
 fwnode graph is built for it. The ov8858 driver supports a single link
 frequency of 360 MHz.
 
+Assisted-by: Claude Opus 5.5
 Signed-off-by: Richard Fritz <gh@chaos4all.de>
 ---
 --- a/drivers/media/pci/intel/ipu-bridge.c

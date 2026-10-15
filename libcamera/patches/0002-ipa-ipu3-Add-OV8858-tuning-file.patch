@@ -1,4 +1,4 @@
-From 317e3c67aec6bf7d2be52d328a39d4ca074ccc4d Mon Sep 17 00:00:00 2001
+From a8d5c4ebbbbb9e3d4a3a359626945dc84c3d2838 Mon Sep 17 00:00:00 2001
 From: Richard Fritz <gh@chaos4all.de>
 Date: Wed, 14 Oct 2026 22:37:09 +0200
 Subject: [PATCH 2/8] ipa: ipu3: Add OV8858 tuning file
@@ -8,8 +8,8 @@ tuning file with an additional Lsc entry. The shading tables contain
 unity gains, as a placeholder for calibration data, which results in the
 same image as without lens shading correction.
 
+Assisted-by: Claude Opus 5.5
 Signed-off-by: Richard Fritz <gh@chaos4all.de>
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  src/ipa/ipu3/data/meson.build |   1 +
  src/ipa/ipu3/data/ov8858.yaml | 128 ++++++++++++++++++++++++++++++++++

@@ -18,6 +18,7 @@ Add the ACPI match table and make the driver work in that environment:
   devices. The TPS68470 clock can generate 24 MHz, so request that rate
   on non-OF platforms. Behaviour on OF platforms is unchanged.
 
+Assisted-by: Claude Opus 5.5
 Signed-off-by: Richard Fritz <gh@chaos4all.de>
 ---
 --- a/drivers/media/i2c/ov8858.c

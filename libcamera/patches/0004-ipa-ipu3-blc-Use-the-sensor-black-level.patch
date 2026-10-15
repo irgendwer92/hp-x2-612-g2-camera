@@ -1,4 +1,4 @@
-From 2abd3c51f1c4d8588bf11417b62ee91180c3ba8f Mon Sep 17 00:00:00 2001
+From 24eafc78f5edd7500341a20c95b8bee8259c5af5 Mon Sep 17 00:00:00 2001
 From: Richard Fritz <gh@chaos4all.de>
 Date: Wed, 14 Oct 2026 22:37:09 +0200
 Subject: [PATCH 4/8] ipa: ipu3: blc: Use the sensor black level
@@ -13,6 +13,7 @@ Take the black level from the camera sensor helper, keeping 64 as the
 default when the helper doesn't know it, and allow per-channel R, Gr,
 Gb and B overrides in the tuning file.
 
+Assisted-by: Claude Opus 5.5
 Signed-off-by: Richard Fritz <gh@chaos4all.de>
 ---
  src/ipa/ipu3/algorithms/blc.cpp | 64 +++++++++++++++++++++++++++------

@@ -1,4 +1,4 @@
-From e887a85fc963bb6d41d074c4b571e0568a984255 Mon Sep 17 00:00:00 2001
+From 1686efa067a96746021c2373761752f3faf0dcd8 Mon Sep 17 00:00:00 2001
 From: Richard Fritz <gh@chaos4all.de>
 Date: Wed, 14 Oct 2026 22:37:09 +0200
 Subject: [PATCH 6/8] libcamera: camera_sensor_properties: Add IMX241
@@ -13,6 +13,7 @@ test_pattern_mode register (0x0600): solid colour, colour bars, fade to
 grey colour bars and PN9. The sensor delays are not known yet; the
 defaults apply.
 
+Assisted-by: Claude Opus 5.5
 Signed-off-by: Richard Fritz <gh@chaos4all.de>
 ---
  src/libcamera/sensor/camera_sensor_properties.cpp | 11 +++++++++++

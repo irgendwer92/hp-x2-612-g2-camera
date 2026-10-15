@@ -19,6 +19,7 @@ lane, link frequency 498 MHz. (The Windows driver uses a 19.2 MHz clock
 and 499.2 MHz; the imx241 driver still supports that if it finds the
 clock at 19.2 MHz, and warns that the link frequency is not listed.)
 
+Assisted-by: Claude Opus 5.5
 Signed-off-by: Richard Fritz <gh@chaos4all.de>
 ---
 --- a/drivers/media/pci/intel/ipu-bridge.c
