@@ -7,6 +7,7 @@ video node (V4L2_PIX_FMT_IPU3_S????10, several frames may be concatenated),
 unpacks it with tools/lsc/calibrate.py's unpacker and writes a half-resolution
 RGB preview: black level subtracted, grey-world white balance, gamma 2.2.
 This is a sanity check of the sensor data path, not image processing.
+Needs numpy (see tools/lsc/README.md). Used by scripts/front-test.sh.
 
   tools/raw2png.py capture.raw 2592 1944 RGGB -o preview.png
 """
@@ -34,7 +35,8 @@ def main(argv):
     ap.add_argument("--stride", type=int, default=None,
                     help="bytes per line (default: ipu3-cio2's)")
     ap.add_argument("--black", type=float, default=64.0,
-                    help="black level at 10 bit (default 64)")
+                    help="black level at 10 bit (default 64, the IMX241's; "
+                         "use 16 for the OV8858)")
     ap.add_argument("--no-wb", action="store_true", help="skip grey-world white balance")
     args = ap.parse_args(argv)
 

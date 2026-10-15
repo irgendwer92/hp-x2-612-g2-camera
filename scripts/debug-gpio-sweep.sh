@@ -1,4 +1,11 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# DEVELOPER / BRING-UP TOOL, not part of the normal install.
+# Historical: written while the OV8858 did not answer on I2C (see the
+# bring-up log in docs/hardware.md). Drives PMIC GPIOs directly: if the bus
+# wedges, power the machine off completely (a reboot is not enough).
+#
 # Bring-up experiment: with the sensor held powered by the diagnostic ov8858
 # build, drive the unused TPS68470 GPIOs (0, 3-6) high, all at once and then one
 # by one, and after each step read the OV8858 chip-ID register (0x300a, expect

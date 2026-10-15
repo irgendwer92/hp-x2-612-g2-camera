@@ -1,12 +1,17 @@
 # Front camera: Sony IMX241 driver
 
-> **Status (2026-10-14):** working. 0005 has moved from `patches/pending/` to
-> `patches/`; both cameras come up on a normal boot with the DKMS package. The
-> missing piece in the first test boot was the PMIC VSIO rail, now a `vsio`
-> supply of the IMX241 (see docs/hardware.md). The test-boot tooling below is
-> kept for debugging; references to `pending/` describe the bring-up history.
+Status: **working.** With the DKMS package (kernel patches 0004 to 0006) the
+front camera comes up on every normal boot next to the rear camera, and it
+streams at 2592x1944 and 1296x972, 30 fps. Applications see it through the
+patched libcamera (`libcamera/patches/0005` to `0008`) as
+"Internal front camera". Stock libcamera 0.7.2 has no IMX241 sensor helper and
+skips this camera ("Failed to create camera sensor helper for imx241") while
+still offering the rear one.
 
-Status: **written, builds without warnings, not yet tested on hardware.**
+This document describes the driver. The chronological bring-up, including
+the missing VSIO rail that made early power-ups fail, is in
+[`hardware.md`](hardware.md); the Windows driver analysis it is based on is in
+[`imx241-windows-re.md`](imx241-windows-re.md).
 
 | | |
 |---|---|
@@ -14,24 +19,26 @@ Status: **written, builds without warnings, not yet tested on hardware.**
 | ACPI | `\_SB.PCI0.LNK1`, HID `INT347F`, module FN50FF-562H, SSDB rotation 0 |
 | Bus | `i2c-INT347F:00`, I2C3, address 0x37 |
 | CSI-2 | IPU3 port 1, 2 lanes, RAW10, native order RGGB (reg 0x0006), black level 64 (reg 0x0008) |
-| Power | TPS68470 (shared with the rear OV8858): VAUX1 "vcore" 1.053 V, VAUX2 "vio" 1.8 V, GPIO4 "avdd-enable" (external 2.8 V), GPIO5 "reset", GPIO6 "powerdown" (both active low). GPIO3 (VCM) is not used: fixed focus. GPIO1/2 are the I2C daisy chain and are never touched. |
+| Power | TPS68470 (shared with the rear OV8858): VSIO "vsio" 1.8 V (sensor I2C/IO switch, shared with the rear camera), VAUX1 "vcore" 1.053 V, VAUX2 "vio" 1.8 V, GPIO4 "avdd-enable" (external 2.8 V), GPIO5 "reset", GPIO6 "powerdown" (both active low). GPIO3 (VCM) is not used: fixed focus. GPIO1/2 are the I2C daisy chain and are never touched. |
 
 Files:
 
 | File | What |
 |---|---|
 | `src/drivers/media/i2c/imx241.c` | the driver (new file) |
-| `patches/0006-media-i2c-add-Sony-IMX241-driver.patch` | the same file as a new-file patch, applied by `prepare.sh` |
-| `patches/pending/0005-…INT347F.patch` | ipu-bridge entry, link frequency 498 MHz. **Stays in `pending/`** until the driver works (see below) |
-| `scripts/front-test.sh`, `scripts/front-test-restore.sh` | test procedure |
+| `patches/0005-media-i2c-Add-driver-for-Sony-IMX241.patch` | the same file as a new-file patch, applied by `prepare.sh` |
+| `patches/0004-…-front-camera.patch` | PMIC board data: supplies and GPIOs for `i2c-INT347F:00` |
+| `patches/0006-…IMX241….patch` | ipu-bridge entry, link frequency 498 MHz |
+| `libcamera/patches/0005`, `0006` | libcamera sensor helper (gain model, black level) and sensor properties |
+| `libcamera/patches/0007`, `0008` | IPU3 AGC uses the sensor digital gain; IMX241 tuning file (AGC target 0.32) |
+| `scripts/front-test.sh`, `scripts/front-test-restore.sh` | developer tooling: raw capture outside libcamera, one-off test boots |
 | `tools/raw2png.py` | PNG preview of an IPU3-packed raw capture |
-| `libcamera/patches/0005`, `0006` | libcamera sensor helper and sensor properties |
 
 ## Driver design
 
 Single V4L2 subdev (`MEDIA_ENT_F_CAM_SENSOR`, one source pad), CCI regmap helpers,
-subdev active state, runtime PM (1 s autosuspend), `INT347F` ACPI match and
-`sony,imx241` OF match. Modelled on upstream `imx219.c`.
+subdev active state, runtime PM (1 s autosuspend), `INT347F` ACPI match (no
+device tree binding yet). Modelled on upstream `imx219.c`.
 
 Why not the generic `ccs` driver: the sensor leaves the clock frequency limit
 registers empty, reports a wrong pixel array (1936x1096), takes its VT dividers in
@@ -100,7 +107,7 @@ The TPS68470 has one clock output, shared by both cameras. It starts at 19.2 MHz
 the rear camera's ov8858 probe sets it to 24 MHz. The provider has `CLK_SET_RATE_GATE`:
 its rate cannot change while any consumer has it prepared (set_rate returns -EBUSY).
 
-Rules in the driver (the user's decision):
+Rules in the driver (a design choice):
 
 - Read `clk_get_rate()`. If it is 24 MHz or 19.2 MHz, use it as is; never change a
   supported rate.
@@ -122,6 +129,10 @@ Rules in the driver (the user's decision):
 | **24 MHz** | 2 (12 MHz) | 83 | 996 MHz | 99.6 MHz | 199.2 Mpix/s | **498 MHz** | 996 Mbit/s |
 | 19.2 MHz (Windows A) | 2 (9.6 MHz) | 104 | 998.4 MHz | 99.84 MHz | 199.68 Mpix/s | 499.2 MHz | 998.4 Mbit/s |
 
+In practice the rear camera's probe sets the shared clock to 24 MHz at boot,
+so the front camera runs at 24 MHz; the 19.2 MHz settings have not been
+exercised on hardware.
+
 Checks for 24 MHz: PLL input 12 MHz (limit 6–27), multiplier 83 (16–255), PLL 996 MHz
 (384–1000), vt_pix 99.6 MHz (≤ 100). Full mode: line 1456 / 99.6 MHz = 14.618 µs,
 frame 2280 lines = 33.33 ms = 30.00 fps. A 2592-pixel RAW10 line on 2 lanes needs
@@ -132,10 +143,10 @@ Rate-dependent registers: 30a2=0e, 31aa=02, 3318=60 are identical in Windows tab
 A (998.4 MHz), B (960 MHz), E and F (996.67 MHz), so they are valid at 996 MHz. **30a5
 is not:** A/B use 0x61, E/F (26 MHz clock, PLL input 8.67 MHz) use 0x60. Its low bit seems
 to follow the PLL input or external clock rather than the PLL output, and Windows has no
-point with a 12 MHz PLL input. The driver uses 0x61 (this module's value); if the 24 MHz
-image is broken while 19.2 MHz works, try 0x60 first.
+point with a 12 MHz PLL input. The driver uses 0x61 (this module's value), and both modes
+stream cleanly with it at 24 MHz.
 
-The ipu-bridge entry (pending 0005) lists 498 MHz. The driver checks the firmware
+The ipu-bridge entry (0006) lists 498 MHz. The driver checks the firmware
 `link-frequencies` with `v4l2_link_freq_to_bitmap()`: it fails if none of its two
 frequencies is listed, and warns if the one for the current clock is not (at 19.2 MHz,
 499.2 MHz vs. 498 MHz, a 0.24 % difference that the CIO2 receiver timing doesn't notice).
@@ -143,9 +154,12 @@ ov8858 itself does no such check (it ignores the firmware list).
 
 ## Power sequencing
 
-As Windows (`VoltageUF`, CLDB[14] = 0) and `debug/front-probe/imx241_probe.c`, which
-powered this sensor up successfully:
+As Windows (`VoltageUF`, CLDB[14] = 0, plus the common `IoActive` step that turns on
+VSIO for every sensor):
 
+0. at least 100 ms since the last power-off (the rails are not actively discharged, so
+   this gives the sensor a clean power-on reset), then `vsio` (TPS68470 VSIO, 1.8 V,
+   optional supply; shared with and refcounted against the rear camera)
 1. analogue: optional `avdd` regulator on, `avdd-enable` GPIO (TPS68470 GPIO4) high, 1–2 ms
 2. `vio` (VAUX2, 1.8 V), then `vcore` (VAUX1, 1.053 V)
 3. clock on, 1–2 ms
@@ -157,6 +171,9 @@ powered this sensor up successfully:
 Power-off is the reverse. All GPIO accesses use the `_cansleep` variants (TPS68470
 GPIOs are behind I2C). `reset`, `powerdown` and `avdd-enable` are optional GPIOs;
 `vio` and `vcore` are required regulators (ACPI platforms get no dummy regulators).
+
+Without VSIO the sensor NACKs on I2C unless the rear camera happens to be powered at the
+same time; that was the cause of the intermittent failures during bring-up.
 
 ### GPIO4 as a regulator (open item)
 
@@ -172,36 +189,48 @@ driver requests an optional `avdd-enable` GPIO (provided by patch 0004) and also
 an optional `avdd` regulator, so the board data can switch to the proper way later
 without a driver change.
 
-## Why the test needs a boot
+## Testing
 
-ipu-bridge builds the sensor fwnode graph once, on the first ipu3-cio2 probe of a
-boot, and attaches it to the CIO2 device as a secondary fwnode that outlives the
-module. A reloaded ipu-bridge (`ipu_bridge_init()` → `ipu_bridge_check_fwnode_graph()`)
-sees the existing graph and returns without adding anything. So after a normal boot,
-no module reload can add INT347F to the graph, and after a test boot none can take
-it out again. ipu3-cio2 only exposes its media graph once every sensor in that graph
-has bound, so in a boot whose graph includes INT347F, the rear camera only works if
-imx241 binds. That is also why 0005 stays in `pending/`.
-
-`scripts/front-test.sh arm` therefore installs modprobe.d `install` rules that load
-the test ipu-bridge (with 0005) and imx241 **only** when the kernel command line contains
-`hpcam_front_test`. Boots without the flag load the normal DKMS modules. The PMIC
-driver is never reloaded.
-
-## Test steps (user)
-
-Prerequisites: the DKMS package with patch 0004 installed (it already is if the front
-probe worked), rear camera working after a normal boot.
+Normal use needs nothing beyond the installation steps in the
+[README](../README.md#installation): after a reboot with the DKMS package,
 
 ```sh
-cd ~/Projects/hp-x2-612-g2-camera
+journalctl -k -b | grep -i imx241    # "Sony IMX241 rev 0x00, 24000000 Hz clock, link frequency 498000000 Hz"
+cam -l                               # with the patched libcamera: two cameras, LNK0 (rear) and LNK1 (front)
+qcam                                 # pick the front camera
+```
+
+`cam`/`qcam` need exclusive access, so stop PipeWire first:
+`systemctl --user stop pipewire.socket pipewire-pulse.socket pipewire pipewire-pulse wireplumber`
+(start it again afterwards).
+
+### Raw capture without libcamera (developer tooling)
+
+`scripts/front-test.sh` captures raw frames straight from the CIO2 with
+`media-ctl`/`v4l2-ctl` (colour-bar test pattern, then a real image) and writes
+PNG previews with `tools/raw2png.py` (needs numpy, see `tools/lsc/README.md`).
+It was written before the ipu-bridge entry (now 0006) was enabled by default and therefore runs in a
+one-off *test boot*:
+
+ipu-bridge builds the sensor fwnode graph once, on the first ipu3-cio2 probe
+of a boot, and attaches it to the CIO2 device as a secondary fwnode that
+outlives the module. A reloaded ipu-bridge (`ipu_bridge_init()` →
+`ipu_bridge_check_fwnode_graph()`) sees the existing graph and returns without
+changing it, and ipu3-cio2 only exposes its media graph once every sensor in
+that graph has bound. So `scripts/front-test.sh arm` installs modprobe.d
+`install` rules that load a separately built ipu-bridge and imx241 (from
+`build/front/`) **only** when the kernel command line contains
+`hpcam_front_test`; boots without the flag load the normal DKMS modules. This
+is still useful to try a modified driver without reinstalling the package:
+
+```sh
 scripts/front-test.sh                 # as user: builds build/front/{ipu-bridge,imx241}.ko
 sudo scripts/front-test.sh arm        # stages them in /var/lib/hp-x2-612-g2-camera/front-test
                                       # and writes /etc/modprobe.d/hp-x2-612-g2-camera-front-test.conf
 ```
 
-Reboot. In the boot menu, edit the entry **once** and append `hpcam_front_test` to the
-kernel command line (systemd-boot: `e`; GRUB: `e`, end of the `linux` line, Ctrl-X).
+Reboot, edit the boot entry once and append `hpcam_front_test` to the kernel
+command line (systemd-boot: `e`; GRUB: `e`, end of the `linux` line, Ctrl-X).
 In that boot:
 
 ```sh
@@ -209,49 +238,37 @@ systemctl --user stop pipewire.socket pipewire-pulse.socket pipewire pipewire-pu
 sudo scripts/front-test.sh run                    # full resolution
 sudo SIZE=1296x972 scripts/front-test.sh run      # binned mode
 sudo EXPOSURE=1000 AGAIN=128 scripts/front-test.sh run   # optional: own exposure / 2x gain
+sudo scripts/front-test.sh reload                 # after rebuilding imx241.ko: swap it in
 ```
 
-`run` checks that the test modules are loaded, then prints module and device state,
-deferred probes, the filtered kernel log (imx241, INT347F, ov8858, cio2, ipu-bridge,
-tps68470), the media topology of both sensors and `cam -l`. It then configures
-`imx241 → ipu3-csi2 1 → ipu3-cio2 1` with media-ctl, captures a few frames with
-`v4l2-ctl` from the CIO2 port 1 node, first with the colour-bar test pattern, then a
-real image, and writes `captures/front-<time>/{bars,image}.{raw,png}` (half-resolution
-previews from `tools/raw2png.py`, which needs numpy: `tools/lsc/.venv`).
+`run` prints module and device state, deferred probes, the filtered kernel log
+and the media topology, configures `imx241 → ipu3-csi2 1 → ipu3-cio2 1`, and
+writes `captures/front-<time>/{bars,image}.{raw,png}`. `bars.png` should show
+vertical SMIA colour bars.
 
-What to look for:
-
-- `Sony IMX241 rev 0x00, 24000000 Hz clock, link frequency 498000000 Hz` in the log,
-  `i2c-INT347F:00: driver=imx241`, both sensors in the media graph, two cameras in `cam -l`.
-- `bars.png`: vertical colour bars. Garbage or no frames → CSI-2/PLL problem
-  (try 30a5 = 0x60, see above). Wrong colours only in `image.png` → Bayer order.
-- Then try libcamera: `~/Projects/libcamera/build/src/apps/qcam/qcam` (front camera),
-  with libcamera patches 0005/0006 for the gain model and black level.
-
-Afterwards:
-
-```sh
-sudo scripts/front-test-restore.sh    # removes the modprobe.d file and staged modules
-systemctl --user start pipewire.socket pipewire-pulse.socket pipewire pipewire-pulse wireplumber
-```
-
-and reboot normally. If imx241 bound, both cameras work in the test boot and nothing
-needs undoing before the reboot; if it didn't, the rear camera stays unavailable until
-the next normal boot (the restore script says which case applies). Once the front camera
-works: move 0005 from `patches/pending/` to `patches/`, rebuild the package, done.
+Afterwards run `sudo scripts/front-test-restore.sh` (removes the modprobe.d
+file and the staged modules) and reboot normally. If imx241 did not bind in
+the test boot, the rear camera is unavailable until that reboot.
 
 ## Open items and risks
 
-- **Untested.** Everything above is from the Windows driver and static analysis.
-- **30a5 at 24 MHz** (see clock section): 0x61 assumed, 0x60 is the alternative.
+- **Low sensitivity.** In dim light the AGC reaches the 33 ms / 8x analogue gain limit;
+  libcamera 0007 adds up to 4x sensor digital gain (keeping 30 fps), and 0008 raises the
+  AGC target to 0.32. Expect noise in dim rooms.
+- **No lens shading correction or colour calibration** for this sensor (the IMX241 tuning
+  file only sets the AGC target).
+- **Mirroring:** checked with a text test in qcam: the default image is unmirrored (correct for a raw camera image; apps mirror the self-view themselves).
 - **Binned mode** is not a Windows operating point for this module (table F belongs to the
   26 MHz "START2FRONT" module); its rate-dependent registers are shared with the full mode.
+  It streams correctly on this tablet.
 - **Bayer order with flips** assumes the sensor does not shift its readout to keep RGGB
   (as on other Sony SMIA sensors). Flips are off by default (SSDB rotation 0, Windows doesn't
-  flip either); verify with `v4l2-ctl -c horizontal_flip=1` before relying on them.
-- **Test pattern** register 0x0600 is SMIA-standard but unconfirmed on this sensor.
+  flip either) and have not been tested; verify with `v4l2-ctl -c horizontal_flip=1` before
+  relying on them.
 - **Pixel array**: a distributor spec lists 2608x1960 total pixels around the 2592x1944 active
   area; the driver only exposes the 2592x1944 window Windows programs.
+- **19.2 MHz clock** settings are derived from Windows table A but untested (see the clock
+  section).
 - **Shared clock races**: ov8858's probe calls `devm_v4l2_sensor_clk_get()`, which sets
   19.2 MHz and then 24 MHz; both fail with -EBUSY if the IMX241 has the clock prepared at
   that moment (probe failure or a 19.2 MHz rear camera). imx241 keeps it prepared only

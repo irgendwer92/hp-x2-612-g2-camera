@@ -1,4 +1,10 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# DEVELOPER / BRING-UP TOOL, not part of the normal install.
+# Historical: written while the OV8858 did not answer on I2C (see the
+# bring-up log in docs/hardware.md).
+#
 # Load the diagnostic ov8858 build and capture the power/clock/GPIO state while
 # the sensor is held powered after a failed chip-ID read.
 # Run as root after `sudo scripts/test-load.sh` (PMIC + bridge must be loaded)
@@ -47,7 +53,7 @@ if dmesg | tail -n +"$((mark + 1))" | grep -q 'dbg: ID read failed'; then
 		say "TPS68470 registers (read-only dump)"
 		i2cdump -f -y "${bus#i2c-}" 0x48 b 2>&1 | sed 's/^/  /'
 	else
-		say "i2c-tools not installed: skipping bus scan and PMIC dump"
+		say "skipping bus scan and PMIC dump (disabled: a blind i2cdetect scan wedged i2c-2)"
 	fi
 fi
 wait "$loader" || true

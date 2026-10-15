@@ -1,5 +1,9 @@
 #!/bin/sh
-# Revert from the test-loaded (patched) modules to the stock in-tree modules.
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# DEVELOPER / BRING-UP TOOL, the counterpart of scripts/test-load.sh.
+# Revert from the test-loaded (patched) modules to the stock in-tree modules
+# for the rest of this boot. Rebooting has the same effect.
 # Run as root:  sudo scripts/restore.sh
 #
 # The in-tree .ko files under /lib/modules/$(uname -r)/kernel are loaded by path,
@@ -32,7 +36,7 @@ intree() {
 	exit 1
 }
 
-unload ipu3_cio2 ov8858 dw9714 ipu_bridge intel_skl_int3472_tps68470
+unload ipu3_cio2 ov8858 imx241 dw9714 ipu_bridge intel_skl_int3472_tps68470
 rm -f "$blacklist"
 
 modprobe -a intel_skl_int3472_common mc videodev v4l2_async v4l2_fwnode
@@ -43,10 +47,10 @@ insmod "$(intree drivers/media/pci/intel/ipu-bridge)"
 echo "modprobe ipu3_cio2"
 modprobe ipu3_cio2
 modprobe dw9714 2>/dev/null || true
-# ov8858 is left unloaded: with stock board data the PMIC does not probe, so
-# the sensor device never appears and udev would not load it anyway.
+# ov8858 and imx241 are left unloaded: with stock board data the PMIC does not
+# probe, so the sensor devices never appear and udev would not load them anyway.
 
-for m in intel_skl_int3472_tps68470 ipu_bridge ipu3_cio2 ov8858; do
+for m in intel_skl_int3472_tps68470 ipu_bridge ipu3_cio2 ov8858 imx241; do
 	if is_loaded "$m"; then
 		t=$(cat "/sys/module/$m/taint" 2>/dev/null)
 		printf '  %-28s loaded%s\n' "$m" "${t:+ (taint: $t - NOT the in-tree module?)}"

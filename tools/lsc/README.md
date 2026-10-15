@@ -18,6 +18,13 @@ writes the `Lsc` tuning block that the IPU3 `Lsc` algorithm in libcamera reads:
 Each of the four Bayer channels gets its own table, so the tables correct
 colour shading as well as vignetting.
 
+**This step is optional and per device.** Lens shading differs from module to
+module, so a table measured on one tablet is only an approximation for
+another. Without your own calibration, the patched libcamera package installs
+an identity table (no correction): the rear camera works, but with dark,
+cyan-tinted corners and a magenta centre. The front camera (IMX241) is not
+covered by this tool and has no lens shading correction.
+
 | File | Purpose |
 |---|---|
 | `capture.sh` | Captures raw SBGGR10_IPU3 frames with `cam` |
@@ -43,8 +50,9 @@ frames away.
 
 ## Requirements
 
-`libcamera-tools` (for `/usr/bin/cam`), python3, and numpy. The system Python
-does not have numpy, so the tool uses a venv:
+The patched libcamera from `packaging/libcamera` (installed), `libcamera-tools`
+(for `/usr/bin/cam`), python3, and numpy. Either install `python-numpy` with
+pacman, or use a venv as below; the commands in this file assume the venv:
 
 ```sh
 cd tools/lsc
@@ -77,7 +85,9 @@ All commands run from the repo root.
    systemctl --user stop pipewire.socket pipewire-pulse.socket pipewire pipewire-pulse wireplumber
    ```
 
-3. **Capture the flat field.** The script keeps 8 raw frames after dropping
+3. **Capture the flat field.** `capture.sh` uses camera 1 by default; check
+   with `cam -l` that camera 1 is the rear one (its id contains `LNK0`;
+   the front camera is `LNK1`), otherwise pass `-c <index>`. The script keeps 8 raw frames after dropping
    24 frames while AE, AWB and AF settle. It also records `cam -I` output and
    per-frame metadata (ExposureTime, AnalogueGain, ColourTemperature) in
    `cam.log` and `metadata.txt`.
@@ -121,45 +131,54 @@ All commands run from the repo root.
    clipping, brightness-drift or low-signal warnings seriously.
 
    Useful options:
-   - `--black-level N`: used when `--dark` is not given. The default is 64.
-   - `--max-gain 4.0`: caps the gains. Use 0 for no cap.
+   - `--black-level N`: used when `--dark` is not given. The default is 16
+     (see [Black level](#black-level)).
+   - `--max-gain 8.0`: caps the gains (default 8; the red corners of this
+     lens need about 7). Use 0 for no cap.
    - `--bayer-order BGGR`
    - `--block 32`: block-median tile size in colour-plane pixels.
    - `--stride`, `--width`, `--height`
 
-8. **Install the tuning file. This needs the patched libcamera with the IPU3
-   `Lsc` algorithm.** Stock libcamera 0.7.2 does not know `Lsc`. With this
-   file installed, its IPA fails with `Algorithm 'Lsc' not found`, and the
-   camera stops working in every application.
-
-   Try the file for one session first:
+8. **Try the file for one session.** This needs the patched libcamera
+   with the IPU3 `Lsc` algorithm. Stock libcamera 0.7.2 does not know `Lsc`;
+   with this file its IPA fails with `Algorithm 'Lsc' not found`.
    ```sh
    LIBCAMERA_IPU3_TUNING_FILE=$PWD/lsc-out/ov8858.yaml qcam
    ```
-   Then install it system-wide. `/etc` is searched before `/usr/share`:
+   The log line `Using tuning file ...` (`LIBCAMERA_LOG_LEVELS=IPAProxy:0`)
+   shows which file is loaded.
+
+9. **Install it by rebuilding the patched libcamera package.**
+   `packaging/libcamera/update.sh` packages `lsc-out/ov8858.yaml` (if it
+   exists) as `/usr/share/libcamera/ipa/ipu3/ov8858.yaml`:
    ```sh
-   sudo install -Dm644 lsc-out/ov8858.yaml /etc/libcamera/ipa/ipu3/ov8858.yaml
+   packaging/libcamera/update.sh
    systemctl --user restart pipewire.socket pipewire-pulse.socket pipewire pipewire-pulse wireplumber
    ```
-   To undo it, run `sudo rm /etc/libcamera/ipa/ipu3/ov8858.yaml`. libcamera
-   then falls back to `uncalibrated.yaml`. The log line
-   `Using tuning file ...` (`LIBCAMERA_LOG_LEVELS=IPAProxy:0`) shows which
-   file is loaded.
+   Don't copy the file to `/etc/libcamera/ipa/ipu3/` instead: `/etc` is
+   searched first and survives package updates, so when an Arch update
+   replaces the patched libcamera with a stock one, the stock IPA would load
+   the file and fail, and the rear camera would stop working in every
+   application. If you did install it there earlier, remove it with
+   `sudo rm /etc/libcamera/ipa/ipu3/ov8858.yaml`.
+
+   To go back to no correction, delete or rename `lsc-out/ov8858.yaml` and
+   run `update.sh` again.
 
 ## Black level
 
-- The ov8858 kernel driver programs a sensor BLC target of 0x4005 = 0x10.
-- libcamera 0.7.2's ov8858 `CameraSensorHelper` defines no black level, and
-  neither does the rkisp1 `ov8858.yaml`.
-- The IPU3 `BlackLevelCorrection` algorithm hard-codes 64 for all channels
-  (`obgrid_param` in `src/ipa/ipu3/algorithms/blc.cpp`).
+- The ov8858 kernel driver programs a sensor BLC target of 0x4005 = 0x10,
+  i.e. 16 at 10 bit. Dark frames on the HP Pro x2 612 G2 measured 14.75 to
+  16 DN (see `docs/hardware.md`).
+- Stock libcamera 0.7.2's IPU3 `BlackLevelCorrection` hard-codes 64 for all
+  channels. The patched libcamera (`libcamera/patches/0003`, `0004`) takes
+  the black level from the sensor helper instead, which is 16 for the OV8858.
 
-The default is therefore **64 at 10 bit**. That matches what the ImgU
-subtracts before shading correction, so the gains fit the pipeline as it is
-today. If dark frames (`--dark`) show a clearly different value, use the
-measured one and fix `BlackLevelCorrection` to match. An error of 48 DN in
-the black level skews the corner gains by roughly 48/(corner signal), which is
-about 10 % at a corner level of 500 DN.
+The gains must be computed with the black level the ImgU subtracts before
+shading correction, so the default is **16 at 10 bit**, matching the
+patched libcamera. `--dark` measures it per channel instead. An error of
+48 DN in the black level skews the corner gains by roughly 48/(corner
+signal), which is about 10 % at a corner level of 500 DN.
 
 ## Method
 

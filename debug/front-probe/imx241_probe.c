@@ -11,6 +11,12 @@
  *
  * The probe always fails with -ENODEV after the dump so nothing stays bound
  * or powered.
+ *
+ * Historical bring-up tool (built and loaded by scripts/front-probe.sh),
+ * superseded by the imx241 driver in patches/0005, which confirmed the
+ * sensor as an IMX241. It does not enable the VSIO rail, which the sensor
+ * also needs (see docs/hardware.md), so it only works while the rear camera
+ * happens to be powered.
  */
 
 #include <linux/clk.h>
@@ -106,7 +112,8 @@ static int imx241_probe_probe(struct i2c_client *client)
 	avdd = devm_gpiod_get(dev, "avdd-enable", GPIOD_OUT_LOW);
 	if (IS_ERR(avdd))
 		return dev_err_probe(dev, PTR_ERR(avdd), "avdd-enable gpio\n");
-	vcm = devm_gpiod_get(dev, "vcm-enable", GPIOD_OUT_LOW);
+	/* Not mapped by the board data any more (fixed focus); optional. */
+	vcm = devm_gpiod_get_optional(dev, "vcm-enable", GPIOD_OUT_LOW);
 	if (IS_ERR(vcm))
 		return dev_err_probe(dev, PTR_ERR(vcm), "vcm-enable gpio\n");
 	reset = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);

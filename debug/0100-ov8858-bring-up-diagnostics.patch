@@ -1,5 +1,7 @@
 Not for upstream: bring-up diagnostics for ov8858 (dbg_settle_ms, dbg_hold_s,
 dbg_reset_raw/dbg_pwdn_raw to drive the reset/powerdown lines during a hold).
+Historical bring-up aid, applied on top of patches/ by scripts/build-debug.sh
+and used by scripts/debug-*.sh. Not needed for normal use.
 
 --- a/drivers/media/i2c/ov8858.c
 +++ b/drivers/media/i2c/ov8858.c

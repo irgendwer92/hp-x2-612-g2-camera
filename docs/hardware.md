@@ -1,4 +1,14 @@
-# HP Pro x2 612 G2 — camera hardware (from ACPI, evaluated at runtime via acpi_call)
+# HP Pro x2 612 G2 — camera hardware and bring-up log
+
+> **Note:** the sections up to "Interface contract" summarise the hardware as
+> it is understood now. Everything from "Bring-up log" on is a **historical,
+> chronological log**: entries were written as things were found out, and
+> later entries supersede earlier ones (for example the first guesses about
+> rails, GPIOs and the front camera core voltage). For the current state see
+> the [README](../README.md) and [front-camera.md](front-camera.md).
+
+ACPI values below were evaluated at runtime via `acpi_call`; the raw dump is in
+[`acpi_vals.txt`](acpi_vals.txt).
 
 DMI: sys_vendor "HP", product_name "HP Pro x2 612 G2". Kernel baseline: v7.2.9 (Arch 7.2.9-arch1-1).
 Platform: Skylake, Intel IPU3 (CIO2 PCI 0000:00:14.3, ImgU 0000:00:05.0).
@@ -17,17 +27,31 @@ Platform: Skylake, Intel IPU3 (CIO2 PCI 0000:00:14.3, ImgU 0000:00:05.0).
 - Will enumerate as i2c device `i2c-INT3477:00` once the PMIC probes (ACPI _DEP).
 
 ## Front camera — \_SB.PCI0.LNK1
-- HID INT347F (believed Sony IMX241, unverified), module "FN50FF-562H"
-- I2C3 at 0x37, CSI-2 port 1, 2 lanes, MCLK 19.2 MHz. No Linux driver. Out of scope.
+- HID INT347F, Sony IMX241 (5 MP; confirmed by the ID registers and the Windows INF), module "FN50FF-562H"
+- I2C3 at 0x37, CSI-2 port 1, 2 lanes, MCLK 19.2 MHz in ACPI (runs at 24 MHz on Linux, see below).
+- Driver: new `imx241` (patches/0005), see [front-camera.md](front-camera.md).
 
-## Interface contract between the patches
-Consumer device: `i2c-INT3477:00`
-- Regulators (TPS68470): `avdd` 2.8 V (ANA), `dovdd` 1.8 V (VSIO / VIO), `dvdd` 1.2 V (CORE);
-  VCM rail `vcc` (dw9714, VCM type 2) + `vdd` for `i2c-INT3477:00-VCM`, 2.8 V (VCM regulator).
-- Rail mapping copies the Surface Go CRD-G wiring; NOT confirmed for this board (no schematic, BIOS hints empty).
-- GPIOs (tps68470-gpio, guessed from CRD-G / Surface Go): 9 = `reset` (active low), 7 = `powerdown` (active low)
-- Clock: `xvclk` — consumers are named automatically by tps68470.c from the PMIC ACPI dependents; no board data needed. Driver modes assume 24 MHz.
+## Interface contract between the patches (current)
+Rear, `i2c-INT3477:00` (ov8858):
+- Regulators (TPS68470): `dvdd` 1.2 V (CORE), `avdd` 2.8 V (ANA), `dovdd` 1.8 V (VSIO);
+  VCM rail 2.8 V as `vcc` (dw9714, VCM type 2) and `vdd` for `i2c-INT3477:00-VCM`, kept always on
+  because the OV8858 does not answer on I2C without it. VIO 1.8 V always on.
+- GPIOs (tps68470-gpio): 9 = `reset` (s_resetn, active low), 7 = `powerdown` (s_enable, active low).
+- The rail mapping and GPIOs started as a copy of the Surface Go (CRD-G) wiring and were later
+  confirmed against the Windows control-logic driver ([windows-ctrllogic-re.md](windows-ctrllogic-re.md)).
 - ipu-bridge: `IPU_SENSOR_CONFIG("INT3477", 1, 360000000)` (OV8858_LINK_FREQ).
+
+Front, `i2c-INT347F:00` (imx241):
+- Regulators: `vsio` (VSIO, shared with the rear `dovdd`; switches the sensor I2C/IO path),
+  `vcore` 1.053 V (VAUX1), `vio` 1.8 V (VAUX2).
+- GPIOs: 4 = `avdd-enable` (external 2.8 V regulator), 5 = `reset`, 6 = `powerdown` (both active low).
+  GPIO3 (Windows' VCM supply for the front module) is not mapped: the module is fixed focus.
+- ipu-bridge: `IPU_SENSOR_CONFIG("INT347F", 1, 498000000)`.
+
+Both:
+- Clock: one shared TPS68470 output, `xvclk`; consumers are named automatically by tps68470.c from
+  the PMIC ACPI dependents. The ov8858 probe sets it to 24 MHz; imx241 accepts 24 or 19.2 MHz.
+- GPIO1/2 are the PMIC's I2C daisy chain (`daisy-chain-enable`) and must stay inputs.
 
 ## Bring-up log
 ### 2026-10-14, first hardware tests (patches 0001–0003, kernel 7.2.9-arch1-1)
@@ -89,7 +113,7 @@ Consumer device: `i2c-INT3477:00`
 - The module EEPROM (0x50–0x53) likely holds factory OTP calibration (the Windows ov8858.sys has
   NVM-read routines); a possible source for per-module shading/AWB data.
 
-## Roadmap (agreed 2026-10-14)
+## Roadmap (2026-10-14; historical, all items done except upstream submission)
 1. Lens shading correction: libcamera IPU3 `Lsc` algorithm + flat-field calibration tool (in progress).
    Flat-field method: white paper held against the lens, pointed at bright even light; raw capture.
 2. Front camera (IMX241, `INT347F`, module FN50FF-562H, I2C3 0x37, CSI port 1, 2 lanes):
@@ -188,6 +212,6 @@ MCLK with a 2592×1944 readout (5 MP; the SMIA limit registers' 1936×1096 array
   Measured raw signal above black (64) at fixed 15 ms: 3.7 DN at 1x, 27.6 DN at 8x (ratio 7.5,
   so the IMX241 analogue gain works as 256/(256 − code)); the sensor is simply insensitive.
 - libcamera patch 0007: the IPU3 AGC now uses the sensor digital gain (V4L2_CID_DIGITAL_GAIN,
-  default value = unity) up to 4x, keeping 30 fps (user requirement). The AGC settles at about
+  default value = unity) up to 4x, keeping 30 fps (a design choice). The AGC settles at about
   1.5x digital gain in that room. libcamera 0008 raises the IMX241 AGC target to 0.32 (default
-  0.16; user choice): measured 2.07x digital gain at 0.24 and 3.24x at 0.36, so about 2.8x at 0.32.
+  0.16; a subjective choice): measured 2.07x digital gain at 0.24 and 3.24x at 0.36, so about 2.8x at 0.32.

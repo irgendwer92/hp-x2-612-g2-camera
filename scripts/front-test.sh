@@ -1,15 +1,26 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# DEVELOPER / BRING-UP TOOL, not part of the normal install.
+# Since the ipu-bridge patch (now 0006) moved into patches/, the DKMS package already
+# enables the front camera; this script remains useful to try a modified
+# imx241/ipu-bridge build in a single boot without reinstalling the package.
+# The reasoning below dates from before that patch was enabled by default.
+#
 # Front camera (IMX241, ACPI INT347F) test without touching the normal setup.
 #
 #   scripts/front-test.sh [build]     as user: build build/front/ipu-bridge.ko
-#                                     (patches/*.patch, including 0005)
-#                                     and build/front/imx241.ko
+#                                     and build/front/imx241.ko from patches/
 #   sudo scripts/front-test.sh arm    stage both modules and install modprobe.d
 #                                     rules that use them ONLY in a boot whose
 #                                     kernel command line contains hpcam_front_test
 #   (reboot, add hpcam_front_test to the kernel command line for that one boot)
 #   sudo scripts/front-test.sh run    in that boot: report and capture raw frames
+#   sudo scripts/front-test.sh reload in that boot: swap in a rebuilt imx241.ko
 #   sudo scripts/front-test-restore.sh  remove the rules and staged modules
+#
+# Safety: `arm` writes /etc/modprobe.d/hp-x2-612-g2-camera-front-test.conf and
+# /var/lib/hp-x2-612-g2-camera/front-test/; front-test-restore.sh removes both.
 #
 # Why a test boot and not a module reload: ipu-bridge builds the sensor fwnode
 # graph once, on the first ipu3-cio2 probe of a boot, and attaches it to the
@@ -172,12 +183,11 @@ preview() {
 	raw=$1; png=$2; order=$3
 	py=$repo/tools/lsc/.venv/bin/python
 	[ -x "$py" ] || py=python3
-	cmd="$py $repo/tools/raw2png.py $raw $width $height $order -o $png"
+	set -- "$py" "$repo/tools/raw2png.py" "$raw" "$width" "$height" "$order" -o "$png"
 	if [ -n "${SUDO_USER:-}" ]; then
-		runuser -u "$SUDO_USER" -- $cmd || echo "  (preview failed; numpy missing? see tools/lsc/README.md)"
-	else
-		$cmd || echo "  (preview failed; numpy missing? see tools/lsc/README.md)"
+		set -- runuser -u "$SUDO_USER" -- "$@"
 	fi
+	"$@" || echo "  (preview failed; numpy missing? see tools/lsc/README.md)"
 }
 
 capture() {
@@ -220,7 +230,9 @@ do_reload() {
 			rmmod "$m" || die "cannot unload $m"
 		fi
 	done
-	modprobe -a $(modinfo -F depends "$stage/imx241.ko" | tr , ' ')
+	deps=$(modinfo -F depends "$stage/imx241.ko" | tr , ' ')
+	# shellcheck disable=SC2086 # word splitting intended: list of module names
+	[ -z "$deps" ] || modprobe -a $deps
 	insmod "$stage/imx241.ko" dyndbg=+p
 	modprobe ipu3_cio2
 	modprobe ov8858

@@ -1,4 +1,7 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# DEVELOPER / BRING-UP TOOL, not part of the normal install.
 # Undo scripts/front-test.sh arm: remove the boot-time rules and the staged
 # test modules, so no later boot can pick them up.
 #   sudo scripts/front-test-restore.sh

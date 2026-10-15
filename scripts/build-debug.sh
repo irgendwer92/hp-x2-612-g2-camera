@@ -1,8 +1,16 @@
 #!/bin/sh
-# Build all three modules with the bring-up experiments from debug/*.patch
-# applied on top of patches/. Output: build/debug/*.ko (the normal build in the
-# repo root is left alone). Run as a normal user, then e.g.
-#   sudo scripts/test-load.sh build/debug
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# DEVELOPER / BRING-UP TOOL, not part of the normal install.
+# Build the modules with the OV8858 bring-up diagnostics from debug/*.patch
+# applied on top of patches/ (module parameters dbg_settle_ms, dbg_hold_s,
+# dbg_reset_raw, dbg_pwdn_raw; see debug/0100-*.patch). Output:
+# build/debug/*.ko (the normal build in the repo root is left alone).
+# Needs the kernel headers for the target kernel. Run as a normal user:
+#   scripts/build-debug.sh [kernelrelease]      (default: uname -r)
+# then e.g.  sudo scripts/test-load.sh build/debug
+# Used by scripts/debug-*.sh, which hold the sensor powered after a failed
+# chip-ID read; that was needed before the OV8858 answered at all.
 set -eu
 repo=$(cd "$(dirname "$0")/.." && pwd)
 kver=${1:-$(uname -r)}

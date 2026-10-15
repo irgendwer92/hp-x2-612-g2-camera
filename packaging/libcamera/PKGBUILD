@@ -1,3 +1,9 @@
+# Maintainer: Richard Fritz <gh@chaos4all.de>
+# Contributor: David Runge <dvzrv@archlinux.org>
+# Contributor: Carl Smedstad <carsme@archlinux.org>
+#
+# Based on Arch Linux's libcamera PKGBUILD (packaging/packages/libcamera).
+#
 # libcamera with the HP Pro x2 612 G2 patches (IPU3 lens shading, OV8858 and
 # IMX241 support and tuning, sensor digital gain), built on top of Arch's
 # libcamera packaging. Only the packages a desktop needs are built: libcamera,
@@ -5,6 +11,14 @@
 #
 # pkgver/pkgrel follow Arch's current libcamera; run ./update.sh to sync them
 # and rebuild. Patches come from ../../libcamera/patches/ in this repository.
+# The OV8858 lens shading tables come from ../../lsc-out/ov8858.yaml if you
+# have calibrated your own tablet with tools/lsc; otherwise the identity
+# (no correction) table from libcamera/patches/0002 is installed.
+#
+# Packages from Arch's split that are not built here (gst-plugin-libcamera,
+# python-libcamera, libcamera-docs) stay installed from the Arch repository;
+# they are built from the same libcamera version, so they should keep
+# working with this build (not tested).
 
 pkgbase=libcamera
 pkgname=(
@@ -63,7 +77,7 @@ prepare() {
   for p in "$_patchdir"/*.patch; do
     echo "applying $(basename "$p")"
     if ! git apply --index "$p"; then
-      error "$(basename "$p") does not apply to libcamera $pkgver; rebase the series in ~/Projects/libcamera"
+      error "$(basename "$p") does not apply to libcamera $pkgver; the series in libcamera/patches/ needs a rebase"
       return 1
     fi
   done
@@ -119,13 +133,13 @@ package_libcamera() {
   meson install -C build --destdir "$pkgdir"
   install -vDm 644 $pkgbase/LICENSES/{BSD-3-Clause,Linux-syscall-note,MIT}.txt -t "$pkgdir/usr/share/licenses/$pkgname/"
 
-  # Ship this device's calibrated OV8858 tables in place of the identity
-  # ones. It lives in the package (not /etc) so that a stock libcamera,
-  # which has no Lsc algorithm, never sees it.
+  # Ship this device's calibrated OV8858 tables (tools/lsc) in place of the
+  # identity ones. It lives in the package (not /etc) so that a stock
+  # libcamera, which has no Lsc algorithm, never sees it.
   if [[ -f $_lsc_tuning ]]; then
     install -vDm 644 "$_lsc_tuning" "$pkgdir/usr/share/libcamera/ipa/ipu3/ov8858.yaml"
   else
-    warning "no $_lsc_tuning: shipping the uncalibrated (identity) OV8858 lens shading"
+    warning "no lsc-out/ov8858.yaml (see tools/lsc/README.md): installing the identity OV8858 lens shading table, i.e. no lens shading correction"
   fi
 
   (

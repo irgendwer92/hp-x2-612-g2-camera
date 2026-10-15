@@ -1,5 +1,8 @@
-# Install to /etc/pacman.d/hooks/ to get a reminder when an Arch update
-# replaces the patched libcamera (HP Pro x2 612 G2) with a stock build.
+# pacman hook: print a reminder when an Arch update replaces the patched
+# libcamera (HP Pro x2 612 G2) with a stock build. It only prints; it never
+# blocks or changes the transaction. Install from the repository root with
+#   sudo install -Dm644 packaging/libcamera/hp-x2-libcamera.hook /etc/pacman.d/hooks/hp-x2-libcamera.hook
+# and remove it with  sudo rm /etc/pacman.d/hooks/hp-x2-libcamera.hook
 [Trigger]
 Operation = Install
 Operation = Upgrade

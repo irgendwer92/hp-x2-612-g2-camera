@@ -1,5 +1,10 @@
 #!/bin/sh
-# Prepare a patched source tree for one kernel version.
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Prepare a patched source tree for one kernel version: fetch the pristine
+# upstream driver files (scripts/fetch-sources.sh) and apply patches/*.patch.
+# Called by `make`, `make dist` and the DKMS PKGBUILD; runs as a normal user
+# and only writes below the build directory.
 #
 # Usage: scripts/prepare.sh [kernelrelease]       (default: uname -r)
 #        scripts/prepare.sh --tag [kernelrelease]  (only print the upstream tag)
@@ -27,6 +32,7 @@ kver_to_tag() {
 	v=$(printf '%s\n' "$1" | sed -n 's/^\([0-9][0-9]*\)\.\([0-9][0-9]*\)\(\.\([0-9][0-9]*\)\)\{0,1\}.*$/\1 \2 \4/p')
 	[ -n "$v" ] || die "cannot derive an upstream tag from kernel release '$1'"
 	rc=$(printf '%s\n' "$1" | sed -n 's/^[0-9.]*-rc\([0-9][0-9]*\).*$/\1/p')
+	# shellcheck disable=SC2086 # split "major minor [patch]" into $1..$3
 	set -- $v
 	if [ -n "$rc" ]; then
 		echo "v$1.$2-rc$rc"

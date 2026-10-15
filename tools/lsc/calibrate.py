@@ -444,9 +444,11 @@ def parse_args(argv):
                          "CIO2 driver uses ceil(width/50)*64 = 4224)")
     ap.add_argument("--bayer-order", default="BGGR",
                     help="Bayer order of the raw frames (default BGGR)")
-    ap.add_argument("--black-level", type=float, default=64.0,
-                    help="black level at 10 bit (default 64, the value "
-                         "libcamera's IPU3 BlackLevelCorrection programs)")
+    ap.add_argument("--black-level", type=float, default=16.0,
+                    help="black level at 10 bit (default 16: the OV8858 "
+                         "BLC target, which the patched libcamera's IPU3 "
+                         "BlackLevelCorrection subtracts; stock libcamera "
+                         "0.7.2 subtracts 64)")
     ap.add_argument("--dark", metavar="PATH",
                     help="directory/glob of dark frames (lens covered); "
                          "measured per-channel black level overrides "
@@ -458,8 +460,9 @@ def parse_args(argv):
                          "(default 32 = 64 sensor pixels)")
     ap.add_argument("--no-smooth", dest="smooth", action="store_false",
                     help="disable 3x3 smoothing of the block medians")
-    ap.add_argument("--max-gain", type=float, default=4.0,
-                    help="cap gains at this value (default 4.0, 0 = no cap)")
+    ap.add_argument("--max-gain", type=float, default=8.0,
+                    help="cap gains at this value (default 8.0, 0 = no cap; "
+                         "the OV8858 red corners need about 7)")
     ap.add_argument("-o", "--outdir", default="lsc-out",
                     help="output directory (default ./lsc-out)")
     return ap.parse_args(argv)

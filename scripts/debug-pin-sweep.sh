@@ -1,4 +1,11 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# DEVELOPER / BRING-UP TOOL, not part of the normal install.
+# Historical: written while the OV8858 did not answer on I2C (see the
+# bring-up log in docs/hardware.md). Drives PMIC GPIOs directly: if the bus
+# wedges, power the machine off completely (a reboot is not enough).
+#
 # Bring-up experiment 2: test the polarity of the sensor reset/powerdown lines
 # (TPS68470 s_resetn = 9, s_enable = 7) and the s_idle output (8).
 # With the sensor held powered by the diagnostic ov8858 build, set every
@@ -22,6 +29,7 @@ dev=/sys/bus/i2c/devices/i2c-INT3477:00
 [ -e $dev ] || { echo "sensor device not present; run test-load.sh first" >&2; exit 1; }
 bus=$(basename "$(readlink -f $dev/..)"); bus=${bus#i2c-}
 chip=$(gpiodetect | awk '/tps68470-gpio/ {print $1; exit}')
+[ -n "$chip" ] || { echo "tps68470 gpiochip not found" >&2; exit 1; }
 
 say() { printf '\n==> %s\n' "$*"; }
 bus_ok() { timeout 2 i2ctransfer -f -y "$bus" w1@0x48 0xff r1 >/dev/null 2>&1; }

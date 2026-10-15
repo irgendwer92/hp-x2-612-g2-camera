@@ -1,8 +1,16 @@
 #!/bin/sh
-# Read-only dump of the TPS68470 registers (i2c-2, 0x48) with the camera-relevant
-# ones decoded. Never writes. Run as root.
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# DEVELOPER / BRING-UP TOOL, not part of the normal install.
+# Read-only dump of the TPS68470 PMIC registers (I2C address 0x48 on the bus
+# of i2c-INT3472:05, i2c-2 on this tablet) with the camera-relevant ones
+# decoded. Only single-register reads (i2ctransfer -f, which bypasses the
+# driver's claim on the address); never writes. Needs i2c-tools.
+#   sudo scripts/pmic-dump.sh
 set -eu
-[ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
+[ "$(id -u)" = 0 ] || { echo "run as root: sudo $0" >&2; exit 1; }
+command -v i2ctransfer >/dev/null || { echo "i2ctransfer missing (pacman -S i2c-tools)" >&2; exit 1; }
+[ -e /sys/bus/i2c/devices/i2c-INT3472:05 ] || { echo "i2c-INT3472:05 not present" >&2; exit 1; }
 bus=$(basename "$(readlink -f /sys/bus/i2c/devices/i2c-INT3472:05/..)"); bus=${bus#i2c-}
 rd() { i2ctransfer -f -y "$bus" w1@0x48 "$1" r1 2>/dev/null || echo "XX"; }
 for r in 0x0d 0x0f 0x14 0x16 0x18 0x1a 0x1c 0x1e 0x20 0x22 0x26 0x27 \
