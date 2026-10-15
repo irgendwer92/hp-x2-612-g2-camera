@@ -57,7 +57,7 @@ Install the headers package for every kernel you boot (`linux-lts-headers`
 for `linux-lts`, and so on). DKMS compiles the modules for each of them.
 
 ```sh
-git clone <URL of this repository> hp-x2-612-g2-camera
+git clone https://github.com/irgendwer92/hp-x2-612-g2-camera.git
 cd hp-x2-612-g2-camera
 ```
 
