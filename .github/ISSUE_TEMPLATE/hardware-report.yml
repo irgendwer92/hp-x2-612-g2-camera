@@ -1,0 +1,57 @@
+name: Hardware report (other model)
+description: Help find out whether another tablet or laptop uses the same IPU3 camera setup as the HP Pro x2 612 G2.
+title: "Hardware report: <vendor and model>"
+labels: ["hardware report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping! This report is read-only: it does not install
+        anything from this repository and does not change your firmware.
+
+        1. Install `acpi_call` (Arch: `sudo pacman -S acpi_call`, or
+           `acpi_call-dkms` / `acpi_call-lts` for other kernels; Debian/Ubuntu:
+           `acpi-call-dkms`).
+        2. In a clone of this repository run
+           `sudo scripts/acpi-camera-dump.sh`, which writes
+           `acpi-camera-dump.txt`.
+        3. Paste that file below.
+
+        Please do **not** install the DKMS package on a model that is not
+        confirmed yet: the board data sets PMIC voltages for the HP Pro x2
+        612 G2 only (it is matched by DMI and does nothing elsewhere, but
+        don't work around that).
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      description: Vendor and exact model name, e.g. "HP Elite x2 1012 G2".
+    validations:
+      required: true
+  - type: input
+    id: distro
+    attributes:
+      label: Distribution and kernel
+      description: e.g. "Arch Linux, 7.2.9-arch1-1"
+    validations:
+      required: true
+  - type: textarea
+    id: dump
+    attributes:
+      label: acpi-camera-dump.txt
+      description: The complete output of `sudo scripts/acpi-camera-dump.sh`.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: windows
+    attributes:
+      label: Camera names under Windows (optional)
+      description: |
+        If you know them, e.g. from the Windows Device Manager or HP's driver
+        package (SoftPaq) for your model: sensor names and camera module names.
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Which cameras the device has (front, rear, IR), what you tried, etc.

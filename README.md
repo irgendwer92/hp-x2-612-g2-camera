@@ -20,6 +20,7 @@ with the same sensor IDs; installing the packages anywhere else is untested.
 
 ## Contents
 
+- [Other models](#other-models)
 - [Installation](#installation)
 - [Applications](#applications)
 - [Updates](#updates)
@@ -31,6 +32,40 @@ with the same sensor IDs; installing the packages anywhere else is untested.
 - [Known limitations](#known-limitations)
 - [Upstreaming](#upstreaming)
 - [License](#license)
+
+## Other models
+
+| Model | Status |
+|---|---|
+| HP Pro x2 612 G2 | supported, tested |
+| HP Elite x2 1012 G2 | **probably compatible, needs a dump to confirm** |
+
+The **HP Elite x2 1012 G2** appears to use the same camera design. An ACPI
+dump attached to [Ubuntu bug 1913809](https://bugs.launchpad.net/bugs/1913809)
+shows the same devices (`INT3477` OV8858 rear, `INT347F` IMX241 front, a
+TPS68470 PMIC at `INT3472:05` with REVID 0x21), and its firmware code for the
+PMIC and both cameras is identical to the Pro x2 612 G2's, down to the layout
+of the camera settings.
+
+What a static dump cannot show are the values the firmware fills in at boot:
+the camera module names, I2C addresses and PMIC variant. They matter: the
+front camera's core voltage depends on the module (1.05 V for the Pro x2's
+`FN50FF-562H`, 1.2 V for other modules in HP's Windows driver). Until a real
+dump confirms them, the packages do nothing on other models: the PMIC board
+data only matches the DMI name "HP Pro x2 612 G2".
+
+**If you own an HP Elite x2 1012 G2** (or another IPU3 tablet with a TPS68470
+PMIC) and want to help, run the read-only report and open a
+[hardware report](https://github.com/irgendwer92/hp-x2-612-g2-camera/issues/new?template=hardware-report.yml):
+
+```sh
+sudo pacman -S acpi_call        # or acpi_call-dkms / acpi_call-lts
+sudo scripts/acpi-camera-dump.sh
+```
+
+It only evaluates ACPI methods of the camera devices (module names, I2C
+addresses, CSI-2 lanes, PMIC type) and writes `acpi-camera-dump.txt`. Please
+do not install the DKMS package on an unconfirmed model.
 
 ## Installation
 
@@ -303,6 +338,7 @@ header explains its use and safety notes.
 | `scripts/build-debug.sh`, `debug/0100-*.patch` | build ov8858 with diagnostic module parameters (historical) |
 | `scripts/debug-probe.sh`, `scripts/debug-gpio-sweep.sh`, `scripts/debug-pin-sweep.sh` | experiments from before the OV8858 answered on I2C; drive PMIC GPIOs directly (historical) |
 | `scripts/front-probe.sh`, `debug/front-probe/` | throw-away module that powered and identified the front sensor before the driver existed (historical) |
+| `scripts/acpi-camera-dump.sh` | read-only report of the firmware's camera configuration, for checking other models (see [Other models](#other-models)) |
 | `scripts/fetch-sources.sh` | fetch the pristine upstream files (used by `prepare.sh`) |
 
 ## Known limitations
