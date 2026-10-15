@@ -114,7 +114,7 @@ version, `update.sh` stops with a message and the series needs a rebase.
 - **Image quality** with stock libcamera is uncalibrated (strong lens shading).
   `libcamera/patches/` adds IPU3 lens shading correction and the correct OV8858
   black level, and `tools/lsc/` calibrates the tables; both are verified on
-  this tablet but only used by a locally built libcamera so far.
+  this tablet and shipped by the patched libcamera package.
 
 ## Upstreaming
 
